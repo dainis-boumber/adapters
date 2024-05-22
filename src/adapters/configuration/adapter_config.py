@@ -496,6 +496,51 @@ class IA3Config(LoRAConfig):
     init_weights: str = "ia3"
     use_gating: bool = False
 
+@dataclass(eq=False)
+class DoRAConfig(LoRAConfig):
+    """
+    The Low-Rank Adaptation (LoRA) architecture proposed by Hu et al. (2021). See https://arxiv.org/pdf/2106.09685.pdf.
+    LoRA adapts a model by reparametrizing the weights of a layer matrix. You can merge the additional weights with the
+    original layer weights using ``model.merge_adapter("lora_name")``.
+
+    Args:
+        selfattn_lora (bool, optional): If True, add LoRA to the self-attention weights of a model.
+            Defaults to True.
+        intermediate_lora (bool, optional): If True, add LoRA to the intermediate MLP weights of a model.
+            Defaults to False.
+        output_lora (bool, optional): If True, add LoRA to the output MLP weights of a model.
+            Defaults to False.
+        leave_out (:obj:`List[int]`, optional):
+            The IDs of the layers (starting at 0) where NO adapter modules should be added.
+        r (int, optional): The rank of the LoRA layer. Defaults to 8.
+        alpha (int, optional): The hyperparameter used for scaling the LoRA reparametrization. Defaults to 8.
+        dropout (float, optional): The dropout rate used in the LoRA layer. Defaults to 0.0.
+        attn_matrices (List[str], optional): Determines which matrices of the self-attention module to adapt.
+            A list that may contain the strings "q" (query), "k" (key), "v" (value). Defaults to ["q", "v"].
+        composition_mode (str, optional):
+            Defines how the injected weights are composed with the original model weights. Can be either "add"
+            (addition of decomposed matrix, as in LoRA) or "scale" (element-wise multiplication of vector, as in
+            (IA)^3). "scale" can only be used together with r=1. Defaults to "add".
+        init_weights (:obj:`str`, optional): Initialization method for the weights of the LoRA modules.
+            Currently, this can be either "lora" (default) or "bert".
+        use_gating (:obj:`bool`, optional):
+            Place a trainable gating module besides the added parameter module to control module activation. This is
+            e.g. used for UniPELT. Defaults to False. Note that modules with use_gating=True cannot be merged using
+            `merge_adapter()`.
+    """
+
+    selfattn_lora: bool = True
+    intermediate_lora: bool = False
+    output_lora: bool = False
+    leave_out: List[int] = field(default_factory=list)
+
+    r: int = 8
+    alpha: int = 8
+    dropout: float = 0.0
+    attn_matrices: List[str] = field(default_factory=lambda: ["q", "v"])
+    composition_mode: str = "add"
+    init_weights: str = "lora"
+    use_gating: bool = False
 
 class ConfigUnion(AdapterConfig):
     """
