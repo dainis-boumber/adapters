@@ -524,40 +524,39 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     
 
     def forward(self, input_states: torch.Tensor):
-         if isinstance(last_lora, DoRA): #DoRA
-            # Handle the fan_in_fan_out case by transposing weights if necessary
-            if self.fan_in_fan_out:
-                weight = torch.transpose(self.weight, -2, -1)
-            else:
-                weight = self.weight
+        # Handle the fan_in_fan_out case by transposing weights if necessary
+        if self.fan_in_fan_out:
+            weight = torch.transpose(self.weight, -2, -1)
+        else:
+            weight = self.weight
 
-            # Perform the linear transformation without bias
-            layer_output = F.linear(input_states, weight)
+        # Perform the linear transformation without bias
+        layer_output = F.linear(input_states, weight)
 
-            if not self.merged:
-                # Get the current adapter setup
-                adapter_setup = self.get_active_setup()
-                if adapter_setup is not None:
-                    # Initialize the LoRA state
-                    state = LoRAState(input_states, None, layer_output, None)
+        if not self.merged:
+            # Get the current adapter setup
+            adapter_setup = self.get_active_setup()
+            if adapter_setup is not None:
+                # Initialize the LoRA state
+                state = LoRAState(input_states, None, layer_output, None)
 
-                    # Compose the current setup
-                    state = self.compose(adapter_setup, state)
-                    _, hidden_states, layer_output, last = state
+                # Compose the current setup
+                state = self.compose(adapter_setup, state)
+                _, hidden_states, layer_output, last = state
 
-                    # Get the last applied LoRA/DoRA module
-                    last_lora = self.loras[last]
-                    
-                   
-                    # Apply DoRA specific modifications
-                    hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-                    hidden_states = last_lora.m * hidden_states
+                # Get the last applied LoRA/DoRA module
+                last_lora = self.loras[last]
+                
+                
+                # Apply DoRA specific modifications
+                hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                hidden_states = last_lora.m * hidden_states
 
-                    # Apply the composed modifications to the output
-                    layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
+                # Apply the composed modifications to the output
+                layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
 
             return layer_output
-         else: #LoRA
+        else: #LoRA
             if self.fan_in_fan_out:
                 weight = torch.transpose(self.weight, -2, -1) if self.fan_in_fan_out else self.weight
                 layer_output = F.linear(input_states, weight, bias=self.bias)
