@@ -522,26 +522,61 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
             
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
     
+
     def forward(self, input_states: torch.Tensor):
-        if self.fan_in_fan_out:
-            weight = torch.transpose(self.weight, -2, -1) if self.fan_in_fan_out else self.weight
-            layer_output = F.linear(input_states, weight, bias=self.bias)
-        else:
-            layer_output = super().forward(input_states)
+         if isinstance(last_lora, DoRA): #DoRA
+            # Handle the fan_in_fan_out case by transposing weights if necessary
+            if self.fan_in_fan_out:
+                weight = torch.transpose(self.weight, -2, -1)
+            else:
+                weight = self.weight
 
-        if not self.merged:
-            adapter_setup = self.get_active_setup()
-            if adapter_setup is not None:
-                state = LoRAState(input_states, None, layer_output, None)
-                state = self.compose(adapter_setup, state)
-                _, hidden_states, layer_output, last = state
+            # Perform the linear transformation without bias
+            layer_output = F.linear(input_states, weight)
 
-                last_lora = self.loras[last]
-                layer_output = last_lora.com(
-                    layer_output, hidden_states, scaling=1.0
-                )
+            if not self.merged:
+                # Get the current adapter setup
+                adapter_setup = self.get_active_setup()
+                if adapter_setup is not None:
+                    # Initialize the LoRA state
+                    state = LoRAState(input_states, None, layer_output, None)
 
-        return layer_output
+                    # Compose the current setup
+                    state = self.compose(adapter_setup, state)
+                    _, hidden_states, layer_output, last = state
+
+                    # Get the last applied LoRA/DoRA module
+                    last_lora = self.loras[last]
+                    
+                   
+                    # Apply DoRA specific modifications
+                    hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    hidden_states = last_lora.m * hidden_states
+
+                    # Apply the composed modifications to the output
+                    layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
+
+            return layer_output
+         else: #LoRA
+            if self.fan_in_fan_out:
+                weight = torch.transpose(self.weight, -2, -1) if self.fan_in_fan_out else self.weight
+                layer_output = F.linear(input_states, weight, bias=self.bias)
+            else:
+                layer_output = super().forward(input_states)
+
+            if not self.merged:
+                adapter_setup = self.get_active_setup()
+                if adapter_setup is not None:
+                    state = LoRAState(input_states, None, layer_output, None)
+                    state = self.compose(adapter_setup, state)
+                    _, hidden_states, layer_output, last = state
+
+                    last_lora = self.loras[last]
+                    layer_output = last_lora.com(
+                        layer_output, hidden_states, scaling=1.0
+                    )
+
+            return layer_output
 
 class LoRALinearTorch(LoRALinear, nn.Linear):
     pass
@@ -568,6 +603,12 @@ if bitsandbytes_available:
                     delta_w = self.maybe_t(lora.delta_w)
                     layer_weight = dequantize_bnb_weight(self.weight, state=self.quant_state)
                     kwargs = self.weight.__dict__
+
+                    # Apply normalization and scaling for DoRA
+                    if isinstance(lora, DoRA):
+                        delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                        delta_w = lora.m * delta_w
+
                     merged_weight = lora.com(layer_weight, delta_w)
                     self.weight = Params4bit(merged_weight.to("cpu"), requires_grad=False, **kwargs).to(
                         self.weight.device
@@ -582,6 +623,12 @@ if bitsandbytes_available:
                 delta_w = self.maybe_t(lora.delta_w)
                 merged_weight = dequantize_bnb_weight(self.weight, state=self.quant_state)
                 kwargs = self.weight.__dict__
+
+                # Apply inverse normalization and scaling for DoRA
+                if isinstance(lora, DoRA):
+                    delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    delta_w = lora.m * delta_w
+
                 layer_weight = lora.com_inv(merged_weight, delta_w)
                 self.weight = Params4bit(layer_weight.to("cpu"), requires_grad=False, **kwargs).to(self.weight.device)
                 self.merged = None
@@ -604,6 +651,12 @@ if bitsandbytes_available:
                         raise ValueError("Cannot merge LoRA layer with gating.")
                     delta_w = self.maybe_t(lora.delta_w)
                     layer_weight = dequantize_bnb_weight(self.weight, state=self.state)
+
+                    # Apply normalization and scaling for DoRA
+                    if isinstance(lora, DoRA):
+                        delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                        delta_w = lora.m * delta_w
+
                     merged_weight = lora.com(layer_weight, delta_w)
                     self.weight = Int8Params(
                         merged_weight.to("cpu"), requires_grad=False, has_fp16_weights=self.weight.has_fp16_weights
@@ -618,12 +671,19 @@ if bitsandbytes_available:
                 lora = self.loras[self.merged]
                 delta_w = self.maybe_t(lora.delta_w)
                 merged_weight = dequantize_bnb_weight(self.weight, state=self.state)
+
+                # Apply inverse normalization and scaling for DoRA
+                if isinstance(lora, DoRA):
+                    delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    delta_w = lora.m * delta_w
+
                 layer_weight = lora.com_inv(merged_weight, delta_w)
                 self.weight = Int8Params(
                     layer_weight.to("cpu"), requires_grad=False, has_fp16_weights=self.weight.has_fp16_weights
                 ).to(self.weight.device)
                 self.state.reset_grads()
                 self.merged = None
+
 
 class LoRAMergedLinear(LoRALayer, nn.Linear):
     """
@@ -657,6 +717,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
             self.weight.data = self.weight.data.T
         if no_init_bias:
             self.bias = nn.Parameter(torch.empty(out_features))
+        
 
     @classmethod
     def wrap(
@@ -694,7 +755,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
     def add_adapter(self, adapter_name: str, layer_idx: int) -> bool:
         is_added = super().add_adapter(adapter_name, layer_idx)
         if is_added:
-            lora_config = lora_config = self.adapters_config.match(
+            lora_config = self.adapters_config.match(
                 adapter_name,
                 config_type=LoRAConfig,
                 layer_idx=self.layer_idx,
@@ -741,6 +802,12 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                         lora.lora_A.data.unsqueeze(0), lora.lora_B.data.unsqueeze(-1), groups=sum(lora.enable_lora)
                     ).squeeze(0)
                 delta_w = delta_w.transpose(-2, -1)
+                
+                # Apply inverse normalization and scaling for DoRA
+                if isinstance(lora, DoRA):
+                    delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    delta_w = lora.m * delta_w
+
                 self.weight.data = lora.com_inv(self.weight.data, T(self.pad(delta_w, lora)))
             self.merged = None
 
@@ -757,6 +824,12 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                     lora.lora_A.data.unsqueeze(0), lora.lora_B.data.unsqueeze(-1), groups=sum(lora.enable_lora)
                 ).squeeze(0)
             delta_w = delta_w.transpose(-2, -1)
+            
+            # Apply normalization and scaling for DoRA
+            if isinstance(lora, DoRA):
+                delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                delta_w = lora.m * delta_w
+
             weight = lora.com(weight, T(self.pad(delta_w, lora)))
 
         return weight
@@ -782,7 +855,10 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
             adapter_setup = self.get_active_setup()
             if adapter_setup is not None:
                 if len(adapter_setup) == 1:
-                    result = F.linear(x, T(self.weight), bias=self.bias)
+                    if isinstance(lora, DoRA):
+                        result = F.linear(x, T(self.weight))
+                    else:
+                        result = F.linear(x, T(self.weight), bias=self.bias)
                     lora = self.loras[adapter_setup[0]]
                     if lora.r > 0:
                         if lora.composition_mode == "scale":
@@ -802,10 +878,18 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                             ).unsqueeze(1)
                         else:
                             gate = None
+                        
+                        # Apply normalization and scaling for DoRA
+                        if isinstance(lora, DoRA):
+                            delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                            delta_w = lora.m * delta_w
+
                         result = lora.com(result, self.pad(delta_w, lora), scaling=gate)
                     return result
                 else:
                     raise ValueError(f"Invalid adapter setup. Cannot use {adapter_setup} with LoRA.")
-
-        return F.linear(x, T(self.weight), bias=self.bias)
+        if isinstance(lora, DoRA):
+            return F.linear(x, T(self.weight))
+        else:
+            return F.linear(x, T(self.weight), bias=self.bias)
 
