@@ -290,12 +290,12 @@ class LoRALayer(AdapterLayerBase):
             location_key=self.location_key,
         )
         if dora_config is not None and self._check_lora_location(dora_config):
-            lora_config = dora_config.copy()
+            
             lora_cls = DoRA
             lora = lora_cls(
-                self._get_lora_shapes(lora_config),
-                lora_config,
-                gating_heads=self.get_n_heads(lora_config),
+                self._get_lora_shapes(dora_config),
+                dora_config,
+                gating_heads=self.get_n_heads(dora_config),
             )
             lora.train(self.training)
             lora = lora.to(self.weight.device)
