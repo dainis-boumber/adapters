@@ -102,79 +102,6 @@ class LoRA(nn.Module):
 
         return hidden_states, gate
     
-class DoRA(nn.Module):
-    def __init__(
-        self,
-        lora_A_shape,
-        lora_B_shape,
-        config:LoRAConfig,
-        gating_heads: int = 1,
-    ):
-        super().__init__()
-        assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
-        self.r = config.r
-        self.lora_alpha = config.alpha
-        self.composition_mode = config.composition_mode
-        self.attn_matrices = config.attn_matrices
-        self.use_gating = config.use_gating
-        # Optional dropout
-        if config.dropout > 0.0:
-            self.lora_dropout = nn.Dropout(p=config.dropout)
-        else:
-            self.lora_dropout = lambda x: x
-
-        # Actual trainable parameters
-        self.lora_A = nn.Parameter(torch.zeros(lora_A_shape))
-        self.lora_B = nn.Parameter(torch.zeros(lora_B_shape))
-        self.scaling = self.lora_alpha / self.r
-
-        # For compatibility with (IA)^3, allow all init_weights types here.
-        # Usually should be "lora".
-        if config.init_weights == "lora":
-            # initialize A the same way as the default for nn.Linear and B to zero
-            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-            nn.init.zeros_(self.lora_B)
-        elif config.init_weights == "bert":
-            nn.init.normal_(self.lora_A, std=0.02)
-            nn.init.normal_(self.lora_B, std=0.02)
-        elif config.init_weights == "ia3":
-            nn.init.ones_(self.lora_A)
-            nn.init.ones_(self.lora_B)
-        else:
-            raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
-
-        if self.use_gating:
-            self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
-            nn.init.normal_(self.gate.weight, std=0.02)
-
-    @property
-    def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A
-
-    def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
-        """Performs the composition operation between existing and injected weights."""
-        if scaling is None:
-            scaling = self.scaling
-        return weights + added * scaling
-
-    def com_inv(self, weights: torch.Tensor, added: torch.Tensor) -> torch.Tensor:
-        """Inverts the composition operation between existing and injected weights."""
-        return weights - added * self.scaling
-
-    def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
-        if hidden_states is None:
-            hidden_states = layer_input
-        hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)
-        if self.use_gating:
-            gate = torch.sigmoid(self.gate(layer_input))
-            gate = torch.mean(gate, dim=1).unsqueeze(-1)
-            hidden_states = hidden_states * gate
-        else:
-            gate = None
-
-        return hidden_states, gate
-
-
 class IA3(nn.Module):
     def __init__(
         self,
@@ -365,21 +292,93 @@ class LoRAState(NamedTuple):
     layer_output: torch.Tensor
     last: Optional[str]
 
+import torch
+from torch import nn
+import torch.nn.functional as F
+import math
+from transformers.configuration_utils import PretrainedConfig
+from transformers.pytorch_utils import Conv1D
+
+# Existing LoRA and IA3 implementations here...
+
+class DoRA(nn.Module):
+    def __init__(
+        self,
+        lora_A_shape,
+        lora_B_shape,
+        config: LoRAConfig,
+        gating_heads: int = 1,
+    ):
+        super().__init__()
+        assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
+        self.r = config.r
+        self.lora_alpha = config.alpha
+        self.composition_mode = config.composition_mode
+        self.attn_matrices = config.attn_matrices
+        self.use_gating = config.use_gating
+        # Optional dropout
+        if config.dropout > 0.0:
+            self.lora_dropout = nn.Dropout(p=config.dropout)
+        else:
+            self.lora_dropout = lambda x: x
+
+        # Actual trainable parameters
+        self.lora_A = nn.Parameter(torch.zeros(lora_A_shape))
+        self.lora_B = nn.Parameter(torch.zeros(lora_B_shape))
+        self.scaling = self.lora_alpha / self.r
+
+        # Initialize weights
+        if config.init_weights == "lora":
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+        elif config.init_weights == "bert":
+            nn.init.normal_(self.lora_A, std=0.02)
+            nn.init.normal_(self.lora_B, std=0.02)
+        elif config.init_weights == "ia3":
+            nn.init.ones_(self.lora_A)
+            nn.init.ones_(self.lora_B)
+        else:
+            raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
+
+        if self.use_gating:
+            self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
+            nn.init.normal_(self.gate.weight, std=0.02)
+
+        # Additional parameter for DoRA
+        self.m = nn.Parameter(torch.ones(1, lora_B_shape[1]))
+
+    @property
+    def delta_w(self) -> torch.Tensor:
+        return self.lora_B @ self.lora_A
+
+    def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
+        if scaling is None:
+            scaling = self.scaling
+        return weights + added * scaling
+
+    def com_inv(self, weights: torch.Tensor, added: torch.Tensor) -> torch.Tensor:
+        return weights - added * self.scaling
+
+    def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
+        if hidden_states is None:
+            hidden_states = layer_input
+        hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)
+        if self.use_gating:
+            gate = torch.sigmoid(self.gate(layer_input))
+            gate = torch.mean(gate, dim=1).unsqueeze(-1)
+            hidden_states = hidden_states * gate
+        else:
+            gate = None
+        
+        # Normalize lora_output and apply dynamic modification (DoRA)
+        hidden_states_norm = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        dora_modification = self.m * hidden_states_norm
+
+        return dora_modification, gate
+
+# Extend LoRALinear to include DoRA
 
 class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
-    """
-    LoRA implementation for Linear layer. This layer supports composition.
-
-    Args:
-        fan_in_fan_out (bool, optional):
-            Set this to True if the layer to replace stores weight like (fan_in, fan_out). Defaults to False.
-        no_init_bias (bool, optional): Use this to add a bias that is not initialized by PyTorch. Defaults to False.
-
-    """
-
-    supported_compositions = [Stack, BatchSplit, Average, Parallel]
-    allow_multi_parallelize = True
-
     def __init__(
         self,
         in_features: int,
@@ -430,7 +429,6 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                 cls = LoRALinear8bitLt
             else:
                 cls = LoRALinearTorch
-            # Make sure that the bias is not added if the original module does not have one
             if "bias" not in kwargs:
                 kwargs["bias"] = hasattr(module, "bias") and module.bias is not None
             new_module = cls(
@@ -477,7 +475,6 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     def reset_adapter(self):
         if self.merged:
             lora = self.loras[self.merged]
-            # Make sure that the weights are not merged
             delta_w = self.maybe_t(lora.delta_w)
             self.weight.data = lora.com_inv(self.weight.data, delta_w)
             self.merged = None
@@ -518,16 +515,20 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
     def compose_single(self, adapter_setup: str, state: LoRAState, lvl: int = 0) -> LoRAState:
         lora = self.loras[adapter_setup]
-        hidden_states, gate = lora(state.hidden_states, state.layer_input)
-        if gate is not None:
-            self._store_gating_score(adapter_setup, gate)
-
-        return state._replace(hidden_states=hidden_states, last=adapter_setup)
+        if isinstance(lora, DoRA):
+            hidden_states, gate = lora(state.hidden_states, state.layer_input)
+            if gate is not None:
+                self._store_gating_score(adapter_setup, gate)
+            return state._replace(hidden_states=hidden_states, last=adapter_setup)
+        else:
+            hidden_states, gate = lora(state.hidden_states, state.layer_input)
+            if gate is not None:
+                self._store_gating_score(adapter_setup, gate)
+            return state._replace(hidden_states=hidden_states, last=adapter_setup)
 
     def forward(self, input_states: torch.Tensor):
         if self.fan_in_fan_out:
             weight = torch.transpose(self.weight, -2, -1) if self.fan_in_fan_out else self.weight
-            # result shape: <batch_size> x <seq_len> x <head_dim>
             layer_output = F.linear(input_states, weight, bias=self.bias)
         else:
             layer_output = super().forward(input_states)
@@ -542,17 +543,14 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                 last_lora = self.loras[last]
                 layer_output = last_lora.com(
                     layer_output, hidden_states, scaling=1.0
-                )  # scaling already applied in compose
+                )
 
         return layer_output
-
 
 class LoRALinearTorch(LoRALinear, nn.Linear):
     pass
 
-
 if bitsandbytes_available:
-
     class LoRALinear4bit(LoRALinear, Linear4bit):
         def copy_from(self, module: Linear4bit):
             self.weight = module.weight
@@ -630,7 +628,6 @@ if bitsandbytes_available:
                 ).to(self.weight.device)
                 self.state.reset_grads()
                 self.merged = None
-
 
 class LoRAMergedLinear(LoRALayer, nn.Linear):
     """
@@ -713,9 +710,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                 "k" in lora_config.attn_matrices,
                 "v" in lora_config.attn_matrices,
             ]
-            # Actual trainable parameters
             if any(lora.enable_lora):
-                # Compute the indices
                 lora.lora_ind = self.weight.new_zeros((self.out_features,), dtype=torch.bool).view(
                     len(lora.enable_lora), -1
                 )
@@ -742,7 +737,6 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
 
         if self.merged:
             lora = self.loras[self.merged]
-            # Make sure that the weights are not merged
             if lora.r > 0 and any(lora.enable_lora):
                 if lora.composition_mode == "scale":
                     delta_w = lora.lora_B
@@ -750,7 +744,6 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                     delta_w = F.conv1d(
                         lora.lora_A.data.unsqueeze(0), lora.lora_B.data.unsqueeze(-1), groups=sum(lora.enable_lora)
                     ).squeeze(0)
-                # shape after transpose: <head_dim> x <head_dim * n_heads>
                 delta_w = delta_w.transpose(-2, -1)
                 self.weight.data = lora.com_inv(self.weight.data, T(self.pad(delta_w, lora)))
             self.merged = None
@@ -767,7 +760,6 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                 delta_w = F.conv1d(
                     lora.lora_A.data.unsqueeze(0), lora.lora_B.data.unsqueeze(-1), groups=sum(lora.enable_lora)
                 ).squeeze(0)
-            # shape after transpose: <head_dim> x <head_dim * n_heads>
             delta_w = delta_w.transpose(-2, -1)
             weight = lora.com(weight, T(self.pad(delta_w, lora)))
 
@@ -814,10 +806,10 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                             ).unsqueeze(1)
                         else:
                             gate = None
-                        # result = (batch_size, seq_len, head_dim * 3)
                         result = lora.com(result, self.pad(delta_w, lora), scaling=gate)
                     return result
                 else:
                     raise ValueError(f"Invalid adapter setup. Cannot use {adapter_setup} with LoRA.")
 
         return F.linear(x, T(self.weight), bias=self.bias)
+

@@ -8,15 +8,17 @@ from ..utils import resolve_adapter_config
 
 logger = logging.getLogger(__name__)
 
+import logging
+from collections.abc import Mapping
+from dataclasses import FrozenInstanceError, asdict, dataclass, field, replace
+from typing import List, Optional, Union
+
+from ..utils import resolve_adapter_config
+
+logger = logging.getLogger(__name__)
 
 class AdapterConfig(Mapping):
-    """
-    Base class for all adaptation methods. This class does not define specific configuration keys, but only provides
-    some common helper methods.
-
-    Args:
-        architecture (str, optional): The type of adaptation method defined by the configuration.
-    """
+    
 
     architecture: Optional[str] = None
 
@@ -82,6 +84,10 @@ class AdapterConfig(Mapping):
             cls_new = PrefixTuningConfig
         elif architecture == "lora":
             cls_new = LoRAConfig
+        elif architecture == "ia3":
+            cls_new = IA3Config
+        elif architecture == "dora":
+            cls_new = DoRAConfig
         elif architecture == "union":
             cls_new = ConfigUnion
         elif architecture == "prompt_tuning":
@@ -127,6 +133,7 @@ class AdapterConfig(Mapping):
         # The check for "None" is necessary because of the example script flags.
         config_dict.update((k, v) for k, v in kwargs.items() if v is not None)
         return cls_new.from_dict(config_dict)
+
 
 
 @dataclass(eq=False)
@@ -535,12 +542,14 @@ class DoRAConfig(LoRAConfig):
     leave_out: List[int] = field(default_factory=list)
 
     r: int = 8
-    alpha: int = 8
+    alpha: float = 8
     dropout: float = 0.0
-    attn_matrices: List[str] = field(default_factory=lambda: ["q", "v"])
-    composition_mode: str = "add"
     init_weights: str = "lora"
     use_gating: bool = False
+    composition_mode: str = "add"
+    attn_matrices: List[str] = field(default_factory=lambda: ["q", "v"])
+    normalization: bool = True
+    modulation: bool = True
 
 class ConfigUnion(AdapterConfig):
     """
