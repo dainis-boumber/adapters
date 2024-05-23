@@ -290,11 +290,20 @@ class LoRALayer(AdapterLayerBase):
             location_key=self.location_key,
         )
         if dora_config is not None and self._check_lora_location(dora_config):
-            lora_config = dora_config
-        if lora_config is not None and self._check_lora_location(lora_config):
-            if lora_config == dora_config:
-                lora_cls = DoRA
-            elif lora_config.composition_mode == "add":
+            lora_config = dora_config.copy()
+            lora_cls = DoRA
+            lora = lora_cls(
+                self._get_lora_shapes(lora_config),
+                lora_config,
+                gating_heads=self.get_n_heads(lora_config),
+            )
+            lora.train(self.training)
+            lora = lora.to(self.weight.device)
+            self.loras[adapter_name] = lora
+            self.last = self.loras[adapter_name] 
+            return True
+        elif lora_config is not None and self._check_lora_location(lora_config):    
+            if lora_config.composition_mode == "add":
                 lora_cls = LoRA
             elif lora_config.composition_mode == "scale":
                 lora_cls = IA3
