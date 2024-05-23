@@ -178,7 +178,7 @@ class DoRA(nn.Module):
         self,
         lora_A_shape,
         lora_B_shape,
-        config: DoRAConfig,
+        config: LoRAConfig,
         gating_heads: int = 1,
     ):
         super().__init__()
@@ -300,7 +300,7 @@ class LoRALayer(AdapterLayerBase):
             else:
                 raise ValueError(f"Unknown composition_mode: {lora_config.composition_mode}")
             lora = lora_cls(
-                self._get_lora_shapes(lora_config),
+                *self._get_lora_shapes(lora_config),
                 lora_config,
                 gating_heads=self.get_n_heads(lora_config),
             )
