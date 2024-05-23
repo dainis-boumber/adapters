@@ -15,7 +15,7 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.pytorch_utils import Conv1D
 
 from ..composition import AdapterCompositionBlock, Average, BatchSplit, Parallel, Stack
-from ..configuration import LoRAConfig, ModelAdaptersConfig
+from ..configuration import LoRAConfig, DoRAConfig, ModelAdaptersConfig
 from .adapter_layer_base import AdapterLayerBase, ComposableAdapterLayerBase
 from .utils import dequantize_bnb_weight
 
@@ -292,12 +292,7 @@ class LoRAState(NamedTuple):
     layer_output: torch.Tensor
     last: Optional[str]
 
-import torch
-from torch import nn
-import torch.nn.functional as F
-import math
-from transformers.configuration_utils import PretrainedConfig
-from transformers.pytorch_utils import Conv1D
+
 
 # Existing LoRA and IA3 implementations here...
 
@@ -306,7 +301,7 @@ class DoRA(nn.Module):
         self,
         lora_A_shape,
         lora_B_shape,
-        config: LoRAConfig,
+        config: DoRAConfig,
         gating_heads: int = 1,
     ):
         super().__init__()
@@ -515,17 +510,18 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
     def compose_single(self, adapter_setup: str, state: LoRAState, lvl: int = 0) -> LoRAState:
         lora = self.loras[adapter_setup]
-        if isinstance(lora, DoRA):
-            hidden_states, gate = lora(state.hidden_states, state.layer_input)
-            if gate is not None:
-                self._store_gating_score(adapter_setup, gate)
-            return state._replace(hidden_states=hidden_states, last=adapter_setup)
-        else:
-            hidden_states, gate = lora(state.hidden_states, state.layer_input)
-            if gate is not None:
-                self._store_gating_score(adapter_setup, gate)
-            return state._replace(hidden_states=hidden_states, last=adapter_setup)
+        hidden_states, gate = lora(state.hidden_states, state.layer_input)
 
+        if isinstance(lora, DoRA):
+            # For DoRA, we apply the normalization and modulation
+            hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+            hidden_states = lora.m * hidden_states
+        
+        if gate is not None:
+            self._store_gating_score(adapter_setup, gate)
+            
+        return state._replace(hidden_states=hidden_states, last=adapter_setup)
+    
     def forward(self, input_states: torch.Tensor):
         if self.fan_in_fan_out:
             weight = torch.transpose(self.weight, -2, -1) if self.fan_in_fan_out else self.weight
