@@ -173,6 +173,10 @@ class IA3(nn.Module):
 
         return hidden_states, gate
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
 
 class DoRA(nn.Module):
     def __init__(
@@ -250,12 +254,16 @@ class DoRA(nn.Module):
         hidden_states = self.lora_dropout(hidden_states.to(self.device)) @ torch.t(self.lora_A) @ torch.t(self.lora_B)  # Shape: (batch_size, self.out_features)
         hidden_states, gate = self.G(hidden_states)  # Shape: (batch_size, self.out_features)
 
-        # Decompose into magnitude and direction, then apply DoRA modifications
+        # Decompose into magnitude and direction
         direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
         magnitude = hidden_states.norm(p=2, dim=-1, keepdim=True)  # Shape: (batch_size, 1)
+
+        # Apply DoRA modifications
         dora_modification = self.m * magnitude * direction  # Shape: (batch_size, self.out_features)
 
         return dora_modification, gate  # Shape: (batch_size, self.out_features), (batch_size, 1)
+
+
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
@@ -382,7 +390,6 @@ class LoRAState(NamedTuple):
     last: Optional[str]
 
 # Extend LoRALinear to include DoRA
-
 class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     def __init__(
         self,
@@ -521,9 +528,9 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         hidden_states, gate = lora(state.hidden_states, state.layer_input)
 
         if isinstance(lora, DoRA):
-            # For DoRA, decompose into magnitude and direction, then apply modifications
-            direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-            magnitude = hidden_states.norm(p=2, dim=-1, keepdim=True)
+            # Decompose into magnitude and direction, then apply DoRA modifications
+            direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+            magnitude = hidden_states.norm(p=2, dim=1, keepdim=True)
             hidden_states = lora.m * magnitude * direction
 
         if gate is not None:
@@ -545,15 +552,16 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                 last_lora = self.loras[last]
 
                 if isinstance(last_lora, DoRA):
-                    # Apply DoRA specific modifications
-                    direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-                    magnitude = hidden_states.norm(p=2, dim=-1, keepdim=True)
+                    # Decompose into magnitude and direction, then apply DoRA modifications
+                    direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    magnitude = hidden_states.norm(p=2, dim=1, keepdim=True)
                     hidden_states = last_lora.m * magnitude * direction
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
                 else:  # LoRA
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
 
         return layer_output
+
 
 class LoRALinearTorch(LoRALinear, nn.Linear):
     pass
