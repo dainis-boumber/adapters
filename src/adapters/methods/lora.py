@@ -63,6 +63,9 @@ class LoRA(nn.Module):
         elif config.init_weights == "ia3":
             nn.init.ones_(self.lora_A)
             nn.init.ones_(self.lora_B)
+        elif config.init_weights == "dora":
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
         else:
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
@@ -132,6 +135,8 @@ class IA3(nn.Module):
             nn.init.normal_(self.lora_B, std=0.02)
         elif config.init_weights == "ia3":
             nn.init.ones_(self.lora_B)
+        elif config.init_weights == "dora":
+            nn.init.zeros_(self.lora_B)
         else:
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
@@ -296,15 +301,9 @@ class LoRALayer(AdapterLayerBase):
             layer_idx=self.layer_idx,
             location_key=self.location_key,
         )
-        dora_config = self.adapters_config.match(
-            adapter_name,
-            config_type=DoRAConfig,
-            layer_idx=self.layer_idx,
-            location_key=self.location_key,
-        )
         
         if lora_config is not None and self._check_lora_location(lora_config):
-            if dora_config is not None and self._check_lora_location(dora_config):
+            if lora_config.init_weights == "dora":
                 lora_cls = DoRA
             elif lora_config.composition_mode == "add":
                 lora_cls = LoRA
