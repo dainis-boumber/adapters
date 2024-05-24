@@ -266,7 +266,7 @@ class DoRA(nn.Module):
 
         # Apply DoRA modifications
         #print(self.m.shape, direction.shape, magnitude.shape, lora_output.shape, linear_output.shape)
-        dora_modification = (self.m @ direction)*magnitude
+        dora_modification = self.m * direction * magnitude
                              ##(size, self.out_features)
 
         output, gate = self.G(self.com(linear_output, dora_modification, scaling=self.scaling)) #Shape: (b_size, self.out_features)
