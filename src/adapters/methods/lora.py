@@ -265,7 +265,7 @@ class DoRA(nn.Module):
         magnitude = lora_output.norm(p=2, dim=-1, keepdim=True)  # Shape: (batch_size, 1)
 
         # Apply DoRA modifications
-        print(self.m.shape, direction.shape, magnitude.shape, lora_output.shape, linear_output.shape)
+        #print(self.m.shape, direction.shape, magnitude.shape, lora_output.shape, linear_output.shape)
         dora_modification = (self.m @ direction)*magnitude
                              ##(size, self.out_features)
 
