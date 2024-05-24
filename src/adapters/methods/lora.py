@@ -264,9 +264,9 @@ class DoRA(nn.Module):
         else:
             gate = None
         # Decompose into magnitude and direction, then apply DoRA modifications
-        self.direction = self.direction / (self.direction.norm(p=2, dim=1, keepdim=True) + 1e-9)
-        self.magnitude = self.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
-        dora_modification = self.m * self.magnitude * self.direction
+        direction = self.direction / (self.direction.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        magnitude = self.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
+        dora_modification = self.m * magnitude * direction
 
         return dora_modification, gate
 
