@@ -544,7 +544,7 @@ class DoRAConfig(LoRAConfig):
     r: int = 8
     alpha: float = 8
     dropout: float = 0.0
-    init_weights: str = "lora"
+    init_weights: str = "dora"
     use_gating: bool = False
     composition_mode: str = "add"
     attn_matrices: List[str] = field(default_factory=lambda: ["q", "v"])
