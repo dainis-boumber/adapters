@@ -62,6 +62,10 @@ class LoRA(nn.Module):
             # initialize A the same way as the default for nn.Linear and B to zero
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
+        elif config.init_weights == "dora":
+            # initialize A the same way as the default for nn.Linear and B to zero
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
         elif config.init_weights == "bert":
             nn.init.normal_(self.lora_A, std=0.02)
             nn.init.normal_(self.lora_B, std=0.02)
@@ -130,6 +134,9 @@ class IA3(nn.Module):
         # For compatibility with LoRA, allow all init_weights types here.
         # Usually should be "ia3".
         if config.init_weights == "lora":
+            logger.warning("(IA)^3 module initialized with LoRA zeo init. Ignore if this is intended.")
+            nn.init.zeros_(self.lora_B)
+        elif config.init_weights == "dora":
             logger.warning("(IA)^3 module initialized with LoRA zeo init. Ignore if this is intended.")
             nn.init.zeros_(self.lora_B)
         elif config.init_weights == "bert":
@@ -250,19 +257,17 @@ class DoRA(nn.Module):
         if hidden_states is None:
             hidden_states = layer_input
         hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)
-        
-        # Decompose into magnitude and direction, then apply DoRA modifications
-        direction = self.direction / (self.direction.norm(p=2, dim=1, keepdim=True) + 1e-9)
-        magnitude = self.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
-        self.direction = direction
-        self.magnitude = magnitude
-        dora_modification = self.m * magnitude * direction
         if self.use_gating:
             gate = torch.sigmoid(self.gate(layer_input))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
             hidden_states = hidden_states * gate
         else:
             gate = None
+        # Decompose into magnitude and direction, then apply DoRA modifications
+        self.direction = self.direction / (self.direction.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        self.magnitude = self.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
+        dora_modification = self.m * self.magnitude * self.direction
+
         return dora_modification, gate
 
 # The rest of the LoRA-related classes will need to handle the modifications
@@ -307,7 +312,7 @@ class LoRALayer(AdapterLayerBase):
         )
         
         if lora_config is not None and self._check_lora_location(lora_config):
-            if dora_config is not None and self._check_lora_location(dora_config):
+            if (dora_config is not None and self._check_lora_location(dora_config)) or self:
                 lora_cls = DoRA
             elif lora_config.composition_mode == "add":
                 lora_cls = LoRA
