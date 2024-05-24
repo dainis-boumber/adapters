@@ -257,18 +257,19 @@ class DoRA(nn.Module):
             hidden_states = layer_input  # Shape: (batch_size, self.in_features)
         hidden_states = hidden_states.to(self.device)
         lora_output = self.lora_alpha * (self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B))# Shap e: (batch_size, self.out_features)
-        lora_output, gate = self.G(lora_output)  # Shape: (batch_size, self.out_features)
-
+        linear_output = nn.Linear(hidden_states)
+        
         # Decompose into magnitude and direction
         direction = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
         magnitude = lora_output.norm(p=2, dim=-1, keepdim=True)  # Shape: (batch_size, 1)
 
         # Apply DoRA modifications
+        print(self.m.shape, direction.shape, magnitude.shape, lora_output.shape, linear_output.shape)
         dora_modification = (self.m @ direction)*magnitude
                              ##(size, self.out_features)
 
-        return self.com(lora_output, dora_modification, scaling=self.scaling), gate  # Shape: (b_size, self.out_features)
-
+        output, gate = self.G(self.com(linear_output, dora_modification, scaling=self.scaling)) #Shape: (b_size, self.out_features)
+        return output, gate
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
