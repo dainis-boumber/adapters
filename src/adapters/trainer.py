@@ -8,7 +8,7 @@ from torch.utils.data.dataset import Dataset
 
 from transformers import PreTrainedModel, Seq2SeqTrainer, Trainer, __version__
 from transformers.configuration_utils import PretrainedConfig
-from transformers.data.data_collator import DataCollator
+from transformers.data.data_collator import DefaultDataCollator
 from transformers.modeling_utils import unwrap_model
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.trainer_callback import TrainerCallback, TrainerControl, TrainerState
@@ -19,10 +19,6 @@ from transformers.utils import CONFIG_NAME, WEIGHTS_NAME, is_sagemaker_mp_enable
 from .composition import AdapterCompositionBlock, Fuse
 
 
-if is_sagemaker_mp_enabled():
-    import smdistributed.modelparallel.torch as smp
-
-
 logger = logging.get_logger(__name__)
 
 
@@ -31,7 +27,7 @@ class AdapterTrainer(Trainer):
         self,
         model: Union[PreTrainedModel, nn.Module] = None,
         args: TrainingArguments = None,
-        data_collator: Optional[DataCollator] = None,
+        data_collator: Optional[DefaultDataCollator] = None,
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Dataset] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
@@ -112,9 +108,6 @@ class AdapterTrainer(Trainer):
 
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
             self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
-
-        if is_sagemaker_mp_enabled():
-            self.optimizer = smp.DistributedOptimizer(self.optimizer)
 
         return self.optimizer
 
