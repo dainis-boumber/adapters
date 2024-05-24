@@ -178,6 +178,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+
 class DoRA(nn.Module):
     def __init__(
         self,
@@ -250,19 +255,19 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input  # Shape: (batch_size, self.in_features)
-
-        hidden_states = self.lora_dropout(hidden_states.to(self.device)) @ torch.t(self.lora_A) @ torch.t(self.lora_B)  # Shape: (batch_size, self.out_features)
-        hidden_states, gate = self.G(hidden_states)  # Shape: (batch_size, self.out_features)
+        hidden_states = hidden_states.to(self.device)
+        lora_output = self.lora_alpha * (self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B))# Shap e: (batch_size, self.out_features)
+        lora_output, gate = self.G(lora_output)  # Shape: (batch_size, self.out_features)
 
         # Decompose into magnitude and direction
-        direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
-        magnitude = hidden_states.norm(p=2, dim=-1, keepdim=True)  # Shape: (batch_size, 1)
+        direction = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
+        magnitude = lora_output.norm(p=2, dim=-1, keepdim=True)  # Shape: (batch_size, 1)
 
         # Apply DoRA modifications
-        dora_modification = self.m * magnitude * direction  # Shape: (batch_size, self.out_features)
+        dora_modification = (self.m @ direction)*magnitude
+                             ##(size, self.out_features)
 
-        return dora_modification, gate  # Shape: (batch_size, self.out_features), (batch_size, 1)
-
+        return self.com(lora_output, dora_modification, scaling=self.scaling), gate  # Shape: (b_size, self.out_features)
 
 
 class LoRALayer(AdapterLayerBase):
