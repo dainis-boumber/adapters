@@ -92,7 +92,7 @@ class LoRA(nn.Module):
             hidden_states = layer_input
         hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)
         if self.use_gating:
-            gate = torch.sigmoid(self.gate(layer_input))
+            gate = torch.sigmoid(self.gate(hidden_states))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
             hidden_states = hidden_states * gate
         else:
@@ -257,7 +257,7 @@ class DoRA(nn.Module):
             hidden_states = layer_input  # Shape: (batch_size, self.in_features)
         hidden_states = hidden_states.to(self.device)
         lora_output = self.lora_alpha * (self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B))# Shap e: (batch_size, self.out_features)
-        linear_output = nn.Linear(len(hidden_states), len(self.layer_input))
+        linear_output = nn.Linear(hidden_states.new_empty, len(self.layer_input))
         
         
         # Decompose into magnitude and direction
