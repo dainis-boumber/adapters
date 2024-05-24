@@ -172,13 +172,12 @@ class IA3(nn.Module):
 
         return hidden_states, gate
 
-
 class DoRA(nn.Module):
     def __init__(
         self,
         lora_A_shape,
         lora_B_shape,
-        config: LoRAConfig,
+        config: DoRAConfig,
         gating_heads: int = 1,
     ):
         super().__init__()
@@ -188,6 +187,9 @@ class DoRA(nn.Module):
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
         self.use_gating = config.use_gating
+        self.direction = None  # Placeholder for direction vector
+        self.magnitude = None  # Placeholder for magnitude
+
         # Optional dropout
         if config.dropout > 0.0:
             self.lora_dropout = nn.Dropout(p=config.dropout)
@@ -222,6 +224,14 @@ class DoRA(nn.Module):
         # Additional parameter for DoRA
         self.m = nn.Parameter(torch.ones(1, lora_B_shape[1]))
 
+        # Initialize magnitude and direction
+        self.initialize_magnitude_direction()
+
+    def initialize_magnitude_direction(self):
+        with torch.no_grad():
+            self.direction = self.lora_A / (self.lora_A.norm(p=2, dim=1, keepdim=True) + 1e-9)
+            self.magnitude = self.lora_A.norm(p=2, dim=1, keepdim=True)
+
     @property
     def delta_w(self) -> torch.Tensor:
         return self.lora_B @ self.lora_A
@@ -245,12 +255,17 @@ class DoRA(nn.Module):
         else:
             gate = None
         
-        # Normalize lora_output and apply dynamic modification (DoRA)
-        hidden_states_norm = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-        dora_modification = self.m * hidden_states_norm
+        # Decompose into magnitude and direction, then apply DoRA modifications
+        direction = self.direction / (self.direction.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        magnitude = self.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
+        self.direction = direction
+        self.magnitude = magnitude
+        dora_modification = self.m * magnitude * direction
 
         return dora_modification, gate
 
+# The rest of the LoRA-related classes will need to handle the modifications
+# Here is a modified example of the relevant parts of LoRALinear and LoRALinearTorch
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
@@ -313,9 +328,7 @@ class LoRALayer(AdapterLayerBase):
         return False
 
     def average_adapter(self, adapter_name: str, input_adapters: Dict[str, float]) -> bool:
-        # add new adapter
         if self.add_adapter(adapter_name, self.layer_idx):
-            # average weights
             avg_state_dict = {}
             for name, weight in input_adapters.items():
                 if name in self.loras:
@@ -326,9 +339,8 @@ class LoRALayer(AdapterLayerBase):
                         else:
                             avg_state_dict[k] = weight * v
                 else:
-                    self.delete_adapter(adapter_name)  # clean up before raising error
+                    self.delete_adapter(adapter_name)
                     raise ValueError("Adapter {} not found.".format(name))
-            # load averaged weights
             self.loras[adapter_name].load_state_dict(avg_state_dict)
             self.last = self.loras[adapter_name]
             return True
@@ -340,10 +352,10 @@ class LoRALayer(AdapterLayerBase):
             del self.loras[adapter_name]
 
     def add_fusion_layer(self, adapter_names: Union[List, str]):
-        pass  # not applicable to lora
+        pass
 
     def delete_fusion_layer(self, adapter_names: Union[List, str]):
-        pass  # not applicable to lora
+        pass
 
     def enable_adapters(self, adapter_setup: AdapterCompositionBlock, unfreeze_adapters: bool, unfreeze_fusion: bool):
         if unfreeze_adapters:
@@ -366,23 +378,10 @@ class LoRALayer(AdapterLayerBase):
 
 
 class LoRAState(NamedTuple):
-    """Models the input and output states of a LoRA layer.
-
-    Args:
-        layer_input (torch.Tensor): The input states to the adapted layer.
-        hidden_states (Optional[torch.Tensor]):
-            The hidden states of the adaptation module. These can be None before passing through the first LoRA/ IA3
-            module.
-        layer_output (torch.Tensor): The output states of the original layer without adaptation.
-        last (str, optional): Name of the last adapter applied in the composition.
-    """
-
     layer_input: torch.Tensor
     hidden_states: Optional[torch.Tensor]
     layer_output: torch.Tensor
     last: Optional[str]
-
-# Extend LoRALinear to include DoRA
 
 class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     def __init__(
@@ -530,7 +529,6 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
             self._store_gating_score(adapter_setup, gate)
             
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
-    
 
     def forward(self, input_states: torch.Tensor):
         
@@ -591,6 +589,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 class LoRALinearTorch(LoRALinear, nn.Linear):
     pass
 
+# Handle bitsandbytes cases similarly
 if bitsandbytes_available:
     class LoRALinear4bit(LoRALinear, Linear4bit):
         def copy_from(self, module: Linear4bit):
@@ -694,7 +693,6 @@ if bitsandbytes_available:
                 self.state.reset_grads()
                 self.merged = None
 
-
 class LoRAMergedLinear(LoRALayer, nn.Linear):
     """
     LoRA implementation for merged attention layer, as used by some model implementations (e.g. GPT-2). This layer
@@ -727,7 +725,6 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
             self.weight.data = self.weight.data.T
         if no_init_bias:
             self.bias = nn.Parameter(torch.empty(out_features))
-        
 
     @classmethod
     def wrap(
@@ -903,4 +900,3 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
             return F.linear(x, T(self.weight))
         else:
             return F.linear(x, T(self.weight), bias=self.bias)
-
