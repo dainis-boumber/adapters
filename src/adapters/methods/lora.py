@@ -172,16 +172,7 @@ class IA3(nn.Module):
             gate = None
 
         return hidden_states, gate
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
+    
 
 class DoRA(nn.Module):
     def __init__(
@@ -270,6 +261,97 @@ class DoRA(nn.Module):
                              ##(size, self.out_features)
 
         output, gate = self.G(self.com(linear_output, dora_modification, scaling=self.scaling)) #Shape: (b_size, self.out_features)
+        return output, gate
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+
+class DoRA(nn.Module):
+    def __init__(
+        self,
+        lora_A_shape,
+        lora_B_shape,
+        config: LoRAConfig,
+        gating_heads: int = 1,
+    ):
+        super().__init__()
+        assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
+        self.r = config.r
+        self.lora_alpha = config.alpha
+        self.composition_mode = config.composition_mode
+        self.attn_matrices = config.attn_matrices
+        self.use_gating = config.use_gating
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Optional dropout
+        if config.dropout > 0.0:
+            self.lora_dropout = nn.Dropout(p=config.dropout)
+        else:
+            self.lora_dropout = lambda x: x
+
+        # Actual trainable parameters
+        self.lora_A = nn.Parameter(torch.zeros(lora_A_shape)).to(self.device)
+        self.lora_B = nn.Parameter(torch.zeros(lora_B_shape)).to(self.device)
+        self.scaling = self.lora_alpha / self.r
+
+        # Initialize weights
+        if config.init_weights == "lora":
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+        elif config.init_weights == "bert":
+            nn.init.normal_(self.lora_A, std=0.02)
+            nn.init.normal_(self.lora_B, std=0.02)
+        elif config.init_weights == "ia3":
+            nn.init.ones_(self.lora_A)
+            nn.init.ones_(self.lora_B)
+        elif config.init_weights == "dora":
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+        else:
+            raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
+
+        if self.use_gating:
+            self.gate = nn.Linear(lora_A_shape[-1], gating_heads).to(self.device)
+            nn.init.normal_(self.gate.weight, std=0.02)
+
+        # Additional parameter for DoRA
+        self.m = nn.Parameter(torch.ones(1, lora_B_shape[1])).to(self.device)  # Shape: (1, self.out_features)
+
+    @property
+    def delta_w(self) -> torch.Tensor:
+        return self.lora_B @ self.lora_A  # Shape: (self.out_features, self.in_features)
+
+    def G(self, h: torch.Tensor):
+        h = h.to(self.device)  # Shape: (batch_size, self.in_features)
+        gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
+        gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
+        return h * gate, gate if gate is not None else h
+
+    def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
+        if scaling is None:
+            scaling = self.scaling
+        return weights + added * scaling
+
+    def com_inv(self, weights: torch.Tensor, added: torch.Tensor) -> torch.Tensor:
+        return weights - added * self.scaling
+
+    def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
+        if hidden_states is None:
+            hidden_states = layer_input  # Shape: (batch_size, self.in_features)
+        hidden_states = hidden_states.to(self.device)
+        lora_output = self.lora_alpha * (self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B))  # Shape: (batch_size, self.out_features)
+        linear_output = nn.Linear(layer_input.ndim, hidden_states.ndim).to(self.device)
+        
+        # Decompose into magnitude and direction
+        direction = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
+        magnitude = lora_output.norm(p=2, dim=-1, keepdim=True)  # Shape: (batch_size, 1)
+
+        # Apply DoRA modifications
+        dora_modification = self.m * direction * magnitude
+
+        output, gate = self.G(self.com(linear_output, dora_modification, scaling=self.scaling))  # Shape: (batch_size, self.out_features)
         return output, gate
 
 class LoRALayer(AdapterLayerBase):
