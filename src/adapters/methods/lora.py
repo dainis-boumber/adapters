@@ -220,13 +220,10 @@ class DoRA(nn.Module):
 
         if self.use_gating:
             self.gate = nn.Linear(lora_A_shape[-1], gating_heads).to(self.device)
-
             nn.init.normal_(self.gate.weight, std=0.02)
 
         # Additional parameter for DoRA
-        self.m = nn.Parameter(torch.ones(1, lora_B_shape[1])).to(self.device) #. Shape: (1, self.out_features)
-        self.magnitude = self.lora_A.norm(p=2, dim=1, keepdim=True).to(self.device)# Shape: (config.r, 1)
-        self.direction = self.lora_A / (self.lora_A.norm(p=2, dim=1, keepdim=True) + 1e-9).to(self.device) # Shape: (config.r, self.in_features)
+        self.m = nn.Parameter(torch.ones(1, lora_B_shape[1])).to(self.device)  # Shape: (1, self.out_features)
 
     @property
     def delta_w(self) -> torch.Tensor:
@@ -250,16 +247,15 @@ class DoRA(nn.Module):
         if hidden_states is None:
             hidden_states = layer_input  # Shape: (batch_size, self.in_features)
 
-        hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)  # Shape: (batch_size, self.out_features)
+        hidden_states = self.lora_dropout(hidden_states.to(self.device)) @ torch.t(self.lora_A) @ torch.t(self.lora_B)  # Shape: (batch_size, self.out_features)
         hidden_states, gate = self.G(hidden_states)  # Shape: (batch_size, self.out_features)
 
         # Decompose into magnitude and direction, then apply DoRA modifications
-        direction = self.direction / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
-        magnitude = self.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)  # Shape: (batch_size, 1)
+        direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
+        magnitude = hidden_states.norm(p=2, dim=-1, keepdim=True)  # Shape: (batch_size, 1)
         dora_modification = self.m * magnitude * direction  # Shape: (batch_size, self.out_features)
 
         return dora_modification, gate  # Shape: (batch_size, self.out_features), (batch_size, 1)
-
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
@@ -292,7 +288,7 @@ class LoRALayer(AdapterLayerBase):
             layer_idx=self.layer_idx,
             location_key=self.location_key,
         )
-        
+
         if lora_config is not None and self._check_lora_location(lora_config):
             if lora_config.init_weights == "dora":
                 lora_cls = DoRA
@@ -526,8 +522,8 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
         if isinstance(lora, DoRA):
             # For DoRA, decompose into magnitude and direction, then apply modifications
-            direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-            magnitude = lora.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
+            direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
+            magnitude = hidden_states.norm(p=2, dim=-1, keepdim=True)
             hidden_states = lora.m * magnitude * direction
 
         if gate is not None:
@@ -550,8 +546,8 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
                 if isinstance(last_lora, DoRA):
                     # Apply DoRA specific modifications
-                    direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-                    magnitude = last_lora.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
+                    direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
+                    magnitude = hidden_states.norm(p=2, dim=-1, keepdim=True)
                     hidden_states = last_lora.m * magnitude * direction
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
                 else:  # LoRA
@@ -587,7 +583,7 @@ if bitsandbytes_available:
 
                     # Apply normalization and scaling for DoRA
                     if isinstance(lora, DoRA):
-                        delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                        delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                         delta_w = lora.m * delta_w
 
                     merged_weight = lora.com(layer_weight, delta_w)
@@ -607,7 +603,7 @@ if bitsandbytes_available:
 
                 # Apply inverse normalization and scaling for DoRA
                 if isinstance(lora, DoRA):
-                    delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                     delta_w = lora.m * delta_w
 
                 layer_weight = lora.com_inv(merged_weight, delta_w)
@@ -635,7 +631,7 @@ if bitsandbytes_available:
 
                     # Apply normalization and scaling for DoRA
                     if isinstance(lora, DoRA):
-                        delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                        delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                         delta_w = lora.m * delta_w
 
                     merged_weight = lora.com(layer_weight, delta_w)
@@ -655,7 +651,7 @@ if bitsandbytes_available:
 
                 # Apply inverse normalization and scaling for DoRA
                 if isinstance(lora, DoRA):
-                    delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                     delta_w = lora.m * delta_w
 
                 layer_weight = lora.com_inv(merged_weight, delta_w)
@@ -784,7 +780,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
 
                 # Apply inverse normalization and scaling for DoRA
                 if isinstance(lora, DoRA):
-                    delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                     delta_w = lora.m * delta_w
 
                 self.weight.data = lora.com_inv(self.weight.data, T(self.pad(delta_w, lora)))
@@ -806,7 +802,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
 
             # Apply normalization and scaling for DoRA
             if isinstance(lora, DoRA):
-                delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                 delta_w = lora.m * delta_w
 
             weight = lora.com(weight, T(self.pad(delta_w, lora)))
@@ -861,7 +857,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
 
                         # Apply normalization and scaling for DoRA
                         if isinstance(lora, DoRA):
-                            delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                            delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                             delta_w = lora.m * delta_w
 
                         result = lora.com(result, self.pad(delta_w, lora), scaling=gate)
