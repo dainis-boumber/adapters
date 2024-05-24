@@ -70,11 +70,10 @@ class LoRA(nn.Module):
             nn.init.ones_(self.lora_B)
         else:
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
-
         if self.use_gating:
             self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
-
+  
     @property
     def delta_w(self) -> torch.Tensor:
         return self.lora_B @ self.lora_A
@@ -97,6 +96,7 @@ class LoRA(nn.Module):
             gate = torch.sigmoid(self.gate(layer_input))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
             hidden_states = hidden_states * gate
+           
         else:
             gate = None
 
@@ -142,6 +142,7 @@ class IA3(nn.Module):
         if self.use_gating:
             self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
+
 
     @property
     def delta_w(self) -> torch.Tensor:
@@ -221,6 +222,7 @@ class DoRA(nn.Module):
             self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
 
+
         # Additional parameter for DoRA
         self.m = nn.Parameter(torch.ones(1, lora_B_shape[1]))
 
@@ -248,12 +250,6 @@ class DoRA(nn.Module):
         if hidden_states is None:
             hidden_states = layer_input
         hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)
-        if self.use_gating:
-            gate = torch.sigmoid(self.gate(layer_input))
-            gate = torch.mean(gate, dim=1).unsqueeze(-1)
-            hidden_states = hidden_states * gate
-        else:
-            gate = None
         
         # Decompose into magnitude and direction, then apply DoRA modifications
         direction = self.direction / (self.direction.norm(p=2, dim=1, keepdim=True) + 1e-9)
@@ -261,7 +257,12 @@ class DoRA(nn.Module):
         self.direction = direction
         self.magnitude = magnitude
         dora_modification = self.m * magnitude * direction
-
+        if self.use_gating:
+            gate = torch.sigmoid(self.gate(layer_input))
+            gate = torch.mean(gate, dim=1).unsqueeze(-1)
+            hidden_states = hidden_states * gate
+        else:
+            gate = None
         return dora_modification, gate
 
 # The rest of the LoRA-related classes will need to handle the modifications
