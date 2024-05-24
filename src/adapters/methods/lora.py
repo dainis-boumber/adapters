@@ -257,7 +257,7 @@ class DoRA(nn.Module):
             hidden_states = layer_input  # Shape: (batch_size, self.in_features)
         hidden_states = hidden_states.to(self.device)
         lora_output = self.lora_alpha * (self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B))# Shap e: (batch_size, self.out_features)
-        linear_output = nn.Linear(hidden_states.new_empty, len(self.layer_input))
+        linear_output = nn.Linear(layer_input.ndim, hidden_states.ndim)
         
         
         # Decompose into magnitude and direction
