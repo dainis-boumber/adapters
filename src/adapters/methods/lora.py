@@ -198,8 +198,8 @@ class DoRA(nn.Module):
             self.lora_dropout = lambda x: x
 
         # Actual trainable parameters
-        self.lora_A = nn.Parameter(torch.zeros(lora_A_shape).to(self.device))
-        self.lora_B = nn.Parameter(torch.zeros(lora_B_shape).to(self.device))
+        self.lora_A = nn.Parameter(torch.zeros(lora_A_shape))
+        self.lora_B = nn.Parameter(torch.zeros(lora_B_shape))
         self.scaling = self.lora_alpha / self.r
 
         # Initialize weights
@@ -219,23 +219,23 @@ class DoRA(nn.Module):
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_A_shape[-1], gating_heads).to(self.device)
+            self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
 
         # Additional parameter for DoRA
-        self.m = nn.Parameter(torch.ones(1, lora_B_shape[1], device=self.device))
-
-        # Initialize magnitude and direction
-        self.initialize_magnitude_direction()
-
-    def initialize_magnitude_direction(self):
-        with torch.no_grad():
-            self.direction = self.lora_A / (self.lora_A.norm(p=2, dim=1, keepdim=True) + 1e-9)
-            self.magnitude = self.lora_A.norm(p=2, dim=1, keepdim=True)
+        self.m = nn.Parameter(torch.ones(1, lora_B_shape[1]))  # Shape: (1, self.out_features)
+        self.magnitude = self.lora_A.norm(p=2, dim=1, keepdim=True)  # Shape: (config.r, 1)
+        self.direction = self.lora_A / (self.lora_A.norm(p=2, dim=1, keepdim=True) + 1e-9)  # Shape: (config.r, self.in_features)
 
     @property
     def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A
+        return self.lora_B @ self.lora_A  # Shape: (self.out_features, self.in_features)
+
+    def G(self, h: torch.Tensor):
+        h = h.to(self.device)  # Shape: (batch_size, self.in_features)
+        gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
+        gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
+        return h * gate, gate if gate is not None else h
 
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
         if scaling is None:
@@ -246,29 +246,19 @@ class DoRA(nn.Module):
         return weights - added * self.scaling
 
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
-        device = layer_input.device
-        self.lora_A = self.lora_A.to(device)
-        self.lora_B = self.lora_B.to(device)
-        self.m = self.m.to(device)
-        if self.use_gating:
-            self.gate = self.gate.to(device)
-
         if hidden_states is None:
-            hidden_states = layer_input
-        hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)
-        if self.use_gating:
-            gate = torch.sigmoid(self.gate(layer_input))
-            gate = torch.mean(gate, dim=1).unsqueeze(-1)
-            hidden_states = hidden_states * gate
-        else:
-            gate = None
-        
-        # Decompose into magnitude and direction, then apply DoRA modifications
-        direction = self.direction.to(device) / (self.direction.norm(p=2, dim=1, keepdim=True) + 1e-9)
-        magnitude = self.magnitude.to(device) * hidden_states.norm(p=2, dim=1, keepdim=True)
-        dora_modification = self.m * magnitude * direction
+            hidden_states = layer_input  # Shape: (batch_size, self.in_features)
 
-        return dora_modification, gate
+        hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)  # Shape: (batch_size, self.out_features)
+        hidden_states, gate = self.G(hidden_states)  # Shape: (batch_size, self.out_features)
+
+        # Decompose into magnitude and direction, then apply DoRA modifications
+        direction = self.direction / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)  # Shape: (batch_size, self.out_features)
+        magnitude = self.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)  # Shape: (batch_size, 1)
+        dora_modification = self.m * magnitude * direction  # Shape: (batch_size, self.out_features)
+
+        return dora_modification, gate  # Shape: (batch_size, self.out_features), (batch_size, 1)
+
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
@@ -534,70 +524,39 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         hidden_states, gate = lora(state.hidden_states, state.layer_input)
 
         if isinstance(lora, DoRA):
-            # For DoRA, we apply the normalization and modulation
-            hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-            hidden_states = lora.m * hidden_states
-        
+            # For DoRA, decompose into magnitude and direction, then apply modifications
+            direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+            magnitude = lora.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
+            hidden_states = lora.m * magnitude * direction
+
         if gate is not None:
             self._store_gating_score(adapter_setup, gate)
-            
+
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
 
     def forward(self, input_states: torch.Tensor):
-        
-        if isinstance(self.last, DoRA):
-            # Handle the fan_in_fan_out case by transposing weights if necessary
-            if self.fan_in_fan_out:
-                weight = torch.transpose(self.weight, -2, -1)
-            else:
-                weight = self.weight
+        weight = self.maybe_t(self.weight)
+        layer_output = F.linear(input_states, weight, bias=self.bias) if not self.fan_in_fan_out else F.linear(input_states, weight)
 
-            # Perform the linear transformation without bias
-            layer_output = F.linear(input_states, weight)
+        if not self.merged:
+            adapter_setup = self.get_active_setup()
+            if adapter_setup is not None:
+                state = LoRAState(input_states, None, layer_output, None)
+                state = self.compose(adapter_setup, state)
+                _, hidden_states, layer_output, last = state
 
-            if not self.merged:
-                # Get the current adapter setup
-                adapter_setup = self.get_active_setup()
-                if adapter_setup is not None:
-                    # Initialize the LoRA state
-                    state = LoRAState(input_states, None, layer_output, None)
+                last_lora = self.loras[last]
 
-                    # Compose the current setup
-                    state = self.compose(adapter_setup, state)
-                    _, hidden_states, layer_output, last = state
-
-                    # Get the last applied LoRA/DoRA module
-                    last_lora = self.loras[last]
-                    
-                    
+                if isinstance(last_lora, DoRA):
                     # Apply DoRA specific modifications
-                    hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-                    hidden_states = last_lora.m * hidden_states
-
-                    # Apply the composed modifications to the output
+                    direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    magnitude = last_lora.magnitude * hidden_states.norm(p=2, dim=1, keepdim=True)
+                    hidden_states = last_lora.m * magnitude * direction
+                    layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
+                else:  # LoRA
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
 
-                return layer_output
-        else: #LoRA
-            if self.fan_in_fan_out:
-                weight = torch.transpose(self.weight, -2, -1) if self.fan_in_fan_out else self.weight
-                layer_output = F.linear(input_states, weight, bias=self.bias)
-            else:
-                layer_output = super().forward(input_states)
-
-            if not self.merged:
-                adapter_setup = self.get_active_setup()
-                if adapter_setup is not None:
-                    state = LoRAState(input_states, None, layer_output, None)
-                    state = self.compose(adapter_setup, state)
-                    _, hidden_states, layer_output, last = state
-
-                    last_lora = self.loras[last]
-                    layer_output = last_lora.com(
-                        layer_output, hidden_states, scaling=1.0
-                    )
-
-            return layer_output
+        return layer_output
 
 class LoRALinearTorch(LoRALinear, nn.Linear):
     pass
@@ -704,7 +663,6 @@ if bitsandbytes_available:
                 ).to(self.weight.device)
                 self.state.reset_grads()
                 self.merged = None
-
 
 class LoRAMergedLinear(LoRALayer, nn.Linear):
     """
@@ -822,7 +780,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                         lora.lora_A.data.unsqueeze(0), lora.lora_B.data.unsqueeze(-1), groups=sum(lora.enable_lora)
                     ).squeeze(0)
                 delta_w = delta_w.transpose(-2, -1)
-                
+
                 # Apply inverse normalization and scaling for DoRA
                 if isinstance(lora, DoRA):
                     delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
@@ -844,7 +802,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                     lora.lora_A.data.unsqueeze(0), lora.lora_B.data.unsqueeze(-1), groups=sum(lora.enable_lora)
                 ).squeeze(0)
             delta_w = delta_w.transpose(-2, -1)
-            
+
             # Apply normalization and scaling for DoRA
             if isinstance(lora, DoRA):
                 delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
@@ -880,7 +838,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                         result = F.linear(x, T(self.weight))
                     else:
                         result = F.linear(x, T(self.weight), bias=self.bias)
-                    
+
                     if lora.r > 0:
                         if lora.composition_mode == "scale":
                             delta_w = lora.lora_B.view(1, 1, -1)
@@ -899,7 +857,7 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                             ).unsqueeze(1)
                         else:
                             gate = None
-                        
+
                         # Apply normalization and scaling for DoRA
                         if isinstance(lora, DoRA):
                             delta_w = delta_w / (delta_w.norm(p=2, dim=1, keepdim=True) + 1e-9)
