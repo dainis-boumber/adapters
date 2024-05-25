@@ -250,7 +250,7 @@ class DoRA(nn.Module):
     def delta_w(self) -> torch.Tensor:
         return self.lora_B @ self.lora_A.t()  # Shape: (self.out_dim, self.in_dim)
 
-    def lora(self, x):
+    def lora_layer(self, x):
         print(f"x shape: {x.shape}")
         print(f"lora_A shape: {self.lora_A.shape}")
         print(f"lora_B shape: {self.lora_B.shape}")
@@ -286,7 +286,7 @@ class DoRA(nn.Module):
         print(f"hidden states shape {hidden_states.shape}")
         linear_output = self.linear(hidden_states)
         print(f"linear output shape f{linear_output.shape}")
-        lora_output = self.lora(hidden_states)
+        lora_output = self.lora_layer(hidden_states)
         print(f"lora output shape {lora_output.shape}")
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
         print(f"lora output norm {lora_output_norm.shape}")
@@ -422,19 +422,6 @@ class LoRAState(NamedTuple):
     layer_output: torch.Tensor
     last: Optional[str]
 
-class LinearWithDoRA(nn.Module):
-    def __init__(self, linear, rank, alpha):
-        super().__init__()
-        self.linear = linear
-        self.lora = LoRALayer(linear.in_features, linear.out_features, rank, alpha)
-        self.m = nn.Parameter(torch.ones(1, linear.out_features))
-
-    def forward(self, x):
-        linear_output = self.linear(x)
-        lora_output = self.lora(x)
-        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
-        dora_modification = self.m * lora_output_norm
-        return linear_output + dora_modification
 
 # Extend LoRALinear to include DoRA
 class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
