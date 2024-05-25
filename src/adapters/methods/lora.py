@@ -252,7 +252,7 @@ class DoRA(nn.Module):
         print(f"x shape: {x.shape}")
         print(f"lora_A shape: {self.lora_A.shape}")
         print(f"lora_B shape: {self.lora_B.shape}")
-        result = self.lora_alpha * (self.lora_dropout(x) @ torch.t(self.lora_A) @ torch.t(self.lora_B))
+        result = self.alpha * (self.lora_dropout(x) @ torch.t(self.lora_A) @ torch.t(self.lora_B))
         print(f"lora result shape: {result.shape}")
         return result
 
