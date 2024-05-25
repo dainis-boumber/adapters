@@ -187,6 +187,8 @@ class DoRA(nn.Module):
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         self.config = config
         self.r = config.r
+        self.in_dim = lora_A_shape[0] # A = in x r
+        self.out_dim = lora_B_shape[1] # B = r x out
         self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
@@ -226,7 +228,7 @@ class DoRA(nn.Module):
             nn.init.normal_(self.gate.weight, std=0.02)
         
         # Additional parameter for DoRA
-        self.m = nn.Parameter(torch.ones(1, lora_B_shape[1])).to(self.device)  # Shape: (1, self.out_features)
+        self.m = nn.Parameter(torch.ones(1, self.out_dim)).to(self.device)  # Shape: (1, self.out_features)
 
     @property
     def delta_w(self) -> torch.Tensor:
@@ -236,7 +238,7 @@ class DoRA(nn.Module):
         return self.lora_alpha * (x @ self.lora_A @ self.lora_B)
 
     def linear(self, x):
-        return nn.Linear()
+        return nn.Linear(self.in_dim, self.out_dim)
 
     def G(self, h: torch.Tensor):
         h = h.to(self.device)  # Shape: (batch_size, self.in_features)
