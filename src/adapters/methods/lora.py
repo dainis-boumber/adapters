@@ -270,10 +270,11 @@ class DoRA(nn.Module):
             hidden_states = layer_input
         print(f"hidden_states {hidden_states.shape}")
         linear_output = self.linear(hidden_states)
-        lora_output = self.lora(hidden_states)
         print(f"linear_output {linear_output.shape}")
+        lora_output = self.lora(hidden_states)
         print(f"lora_output {lora_output.shape}")
-
+        lora_output = self.lora_layer(hidden_states)
+        print(f"lora_output {lora_output.shape}")
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         print(f"self.m {self.m.shape}")
         print(f"lora_output_norm {lora_output_norm.shape}")
