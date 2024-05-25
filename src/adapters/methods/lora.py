@@ -185,6 +185,11 @@ class DoRALayer(nn.Module):
         x = self.alpha * (x @ self.A @ self.B)
         return x
 
+import torch
+import torch.nn as nn
+import math
+from typing import Optional
+
 class DoRA(nn.Module):
     def __init__(
         self,
@@ -204,18 +209,20 @@ class DoRA(nn.Module):
         self.attn_matrices = config.attn_matrices
         self.use_gating = config.use_gating
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
         # Optional dropout
         if config.dropout > 0.0:
             self.lora_dropout = nn.Dropout(p=config.dropout)
         else:
             self.lora_dropout = lambda x: x
+        
         std_dev = 1 / torch.sqrt(torch.tensor(self.r).float())
         self.lora_A = nn.Parameter(torch.randn(lora_A_shape) * std_dev).to(self.device)
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape)).to(self.device)
         
         # Actual trainable parameter
         self.scaling = self.lora_alpha / self.r
-        self.linear_layer = nn.Linear(self.in_dim, self.out_dim).to(self.device)
+
         # Initialize weights
         if config.init_weights == "lora":
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
@@ -254,8 +261,8 @@ class DoRA(nn.Module):
 
     def linear(self, x):
         print(f"linear input shape: {x.shape}")
-        
-        result = self.linear_layer(x)
+        linear_layer = nn.Linear(self.in_dim, self.out_dim).to(self.device)
+        result = linear_layer(x)
         print(f"linear output shape: {result.shape}")
         return result
 
@@ -263,12 +270,7 @@ class DoRA(nn.Module):
         h = h.to(self.device)  # Shape: (batch_size, self.in_dim)
         gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
         gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
-        if gate is not None:
-            output = h * gate
-        else:
-            output = h
-        print(f"output dimensions: {output.shape}")
-        return output, gate
+        return h * gate if gate is not None else h
 
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
         if scaling is None:
@@ -281,12 +283,19 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         hidden_states = layer_input.to(self.device) if hidden_states is None else hidden_states.to(self.device)
         
+        print(f"hidden states shape {hidden_states.shape}")
         linear_output = self.linear(hidden_states)
+        print(f"linear output shape f{linear_output.shape}")
         lora_output = self.lora(hidden_states)
-        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        print(f"lora output shape {lora_output}")
+        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
+        print(f"lora output norm {lora_output_norm}")
         dora_modification = self.m * lora_output_norm
-        output, gate = self.G(self.com(linear_output, dora_modification))
-        return output, gate
+        print(f"dora modification {dora_modification}")
+        output = self.com(linear_output, dora_modification)
+        print(f"output dimensions: {output.shape}")
+        return output
+
 
 
 class LoRALayer(AdapterLayerBase):
