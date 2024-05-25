@@ -169,6 +169,19 @@ class IA3(nn.Module):
 
         return hidden_states, gate
 
+
+class DoRALayer(nn.Module):
+    def __init__(self, in_dim, out_dim, rank, alpha):
+        super().__init__()
+        std_dev = 1 / torch.sqrt(torch.tensor(rank).float())
+        self.A = nn.Parameter(torch.randn(in_dim, rank) * std_dev)
+        self.B = nn.Parameter(torch.zeros(rank, out_dim))
+        self.alpha = alpha
+
+    def forward(self, x):
+        x = self.alpha * (x @ self.A @ self.B)
+        return x
+    
 class DoRA(nn.Module):
     def __init__(
         self,
@@ -178,7 +191,7 @@ class DoRA(nn.Module):
         gating_heads: int = 1,
     ):
         super().__init__()
-        assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
+        
         self.config = config
         self.r = config.r
         self.out_dim = lora_B_shape[0]
@@ -194,10 +207,17 @@ class DoRA(nn.Module):
         else:
             self.lora_dropout = lambda x: x
         
+        
+        assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         std_dev = 1 / torch.sqrt(torch.tensor(self.r).float())
         self.lora_A = nn.Parameter(torch.randn(lora_A_shape) * std_dev).to(self.device)
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape)).to(self.device)
         self.scaling = int(self.lora_alpha)
+
+        self.linear = nn.Linear(in_features=lora_A_shape[1], out_features=lora_B_shape[0])
+        self.lora = LoRALayer(self.linear.in_features, self.linear.out_features, self.rank, self.alpha)
+        self.m = nn.Parameter(torch.ones(1, self.linear.out_features))
+        
 
         if config.init_weights == "lora":
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
@@ -220,6 +240,7 @@ class DoRA(nn.Module):
         
         self.m = nn.Parameter(torch.ones(1, self.out_dim)).to(self.device)
 
+    
     @property
     def delta_w(self) -> torch.Tensor:
         return self.lora_B @ self.lora_A
@@ -245,6 +266,14 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input
+        linear_output = self.linear(hidden_states)
+        lora_output = self.lora(hidden_states)
+        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        dora_modification = self.m * lora_output_norm
+        return linear_output + dora_modification
+        '''
+        if hidden_states is None:
+            hidden_states = layer_input
         lora_output = self.lora_layer(hidden_states)
         print("hidden_states", lora_output.shape)
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
@@ -264,6 +293,8 @@ class DoRA(nn.Module):
         
 
         return hidden_states, gate
+        '''
+
     
 
 class LoRALayer(AdapterLayerBase):
