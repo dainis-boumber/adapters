@@ -273,32 +273,18 @@ class DoRA(nn.Module):
         lora_output = self.lora(hidden_states)
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         dora_modification = self.m * lora_output_norm
-        return linear_output + dora_modification
-        '''
-        if hidden_states is None:
-            hidden_states = layer_input
-        lora_output = self.lora_layer(hidden_states)
-        print("hidden_states", lora_output.shape)
-        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-        print("direction", lora_output_norm.shape)
-        print(f"m {self.m.shape} lora_output_norm {lora_output_norm.shape}")
-        dora_modification = self.m * lora_output_norm
-        print(f"dora_modification {dora_modification.shape}")
+        hidden_states = linear_output + dora_modification
         if self.use_gating:
-            gate = self.gate(dora_modification)
-            print(f"gate {gate.shape}")
+            gate = self.gate(hidden_states)
             gate = torch.sigmoid(gate)
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
-            dora_modification = dora_modification * gate
-            print("hidden_states", hidden_states.shape)
+            hidden_states = hidden_states * gate
         else:
             gate = None
-        
 
         return hidden_states, gate
-        '''
-
     
+        
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
