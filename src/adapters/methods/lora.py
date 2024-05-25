@@ -287,11 +287,11 @@ class DoRA(nn.Module):
         linear_output = self.linear(hidden_states)
         print(f"linear output shape f{linear_output.shape}")
         lora_output = self.lora(hidden_states)
-        print(f"lora output shape {lora_output}")
+        print(f"lora output shape {lora_output.shape}")
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-        print(f"lora output norm {lora_output_norm}")
+        print(f"lora output norm {lora_output_norm.shape}")
         dora_modification = self.m * lora_output_norm
-        print(f"dora modification {dora_modification}")
+        print(f"dora modification {dora_modification.shape}")
         output = self.com(linear_output, dora_modification)
         print(f"output dimensions: {output.shape}")
         return output
