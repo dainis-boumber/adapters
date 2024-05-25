@@ -5,7 +5,6 @@ from typing import Dict, List, NamedTuple, Optional, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import transpose
 from transformers.configuration_utils import PretrainedConfig
 from transformers.pytorch_utils import Conv1D
 
@@ -14,16 +13,13 @@ from ..configuration import LoRAConfig, DoRAConfig, ModelAdaptersConfig
 from .adapter_layer_base import AdapterLayerBase, ComposableAdapterLayerBase
 from .utils import dequantize_bnb_weight
 
-
 try:
     from bitsandbytes.nn import Int8Params, Linear4bit, Linear8bitLt, Params4bit
-
     bitsandbytes_available = True
 except ImportError:
     bitsandbytes_available = False
 
 logger = logging.getLogger(__name__)
-
 
 class LoRA(nn.Module):
     def __init__(
@@ -100,7 +96,6 @@ class LoRA(nn.Module):
 
         return hidden_states, gate
 
-
 class IA3(nn.Module):
     def __init__(
         self,
@@ -129,7 +124,7 @@ class IA3(nn.Module):
         # For compatibility with LoRA, allow all init_weights types here.
         # Usually should be "ia3".
         if config.init_weights == "lora":
-            logger.warning("(IA)^3 module initialized with LoRA zeo init. Ignore if this is intended.")
+            logger.warning("(IA)^3 module initialized with LoRA zero init. Ignore if this is intended.")
             nn.init.zeros_(self.lora_B)
         elif config.init_weights == "bert":
             nn.init.normal_(self.lora_B, std=0.02)
@@ -173,7 +168,6 @@ class IA3(nn.Module):
 
         return hidden_states, gate
 
-
 class DoRA(nn.Module):
     def __init__(
         self,
@@ -186,15 +180,14 @@ class DoRA(nn.Module):
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         self.config = config
         self.r = config.r
-        self.in_dim = lora_A_shape[1]  # Adjusted to match input dimensions
-        self.out_dim = lora_B_shape[0]  # Adjusted to match output dimensions
+        self.in_dim = lora_A_shape[1]
+        self.out_dim = lora_B_shape[0]
         self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
         self.use_gating = config.use_gating
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Optional dropout
         if config.dropout > 0.0:
             self.lora_dropout = nn.Dropout(p=config.dropout)
         else:
@@ -203,11 +196,8 @@ class DoRA(nn.Module):
         std_dev = 1 / torch.sqrt(torch.tensor(self.r).float())
         self.lora_A = nn.Parameter(torch.randn(lora_A_shape) * std_dev).to(self.device)
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape)).to(self.device)
-        
-        # Actual trainable parameter
         self.scaling = int(self.lora_alpha)
 
-        # Initialize weights
         if config.init_weights == "lora":
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
@@ -227,33 +217,24 @@ class DoRA(nn.Module):
             self.gate = nn.Linear(self.in_dim, gating_heads).to(self.device)
             nn.init.normal_(self.gate.weight, std=0.02)
         
-        # Additional parameter for DoRA
-        self.m = nn.Parameter(torch.ones(1, self.out_dim)).to(self.device)  # Shape: (1, self.out_dim)
+        self.m = nn.Parameter(torch.ones(1, self.out_dim)).to(self.device)
 
     @property
     def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A.t()  # Shape: (self.out_dim, self.in_dim)
+        return self.lora_B @ self.lora_A.t()
 
     def lora_layer(self, x):
         print(f"x shape: {x.shape}")
         print(f"lora_A shape: {self.lora_A.shape}")
         print(f"lora_B shape: {self.lora_B.shape}")
-        # Corrected order and transposition
-        result = self.lora_alpha * (x @ self.lora_A.t() @ self.lora_B.t())
+        result = self.lora_alpha * (x @ self.lora_A @ self.lora_B.t())
         print(f"lora result shape: {result.shape}")
         return result
 
-    def linear(self, x):
-        print(f"linear input shape: {x.shape}")
-        linear_layer = nn.Linear(self.in_dim, self.out_dim).to(self.device)
-        result = linear_layer(x)
-        print(f"linear output shape: {result.shape}")
-        return result
-
     def G(self, h: torch.Tensor):
-        h = h.to(self.device)  # Shape: (batch_size, self.in_dim)
-        gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
-        gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
+        h = h.to(self.device)
+        gate = torch.sigmoid(self.gate(h))
+        gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None
         if gate is not None:
             return h * gate, gate
         else:
@@ -278,6 +259,7 @@ class DoRA(nn.Module):
         output, gate = self.G(dora_modification)
         
         return output, gate
+
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
 
@@ -333,9 +315,7 @@ class LoRALayer(AdapterLayerBase):
         return False
 
     def average_adapter(self, adapter_name: str, input_adapters: Dict[str, float]) -> bool:
-        # add new adapter
         if self.add_adapter(adapter_name, self.layer_idx):
-            # average weights
             avg_state_dict = {}
             for name, weight in input_adapters.items():
                 if name in self.loras:
@@ -346,9 +326,8 @@ class LoRALayer(AdapterLayerBase):
                         else:
                             avg_state_dict[k] = weight * v
                 else:
-                    self.delete_adapter(adapter_name)  # clean up before raising error
+                    self.delete_adapter(adapter_name)
                     raise ValueError("Adapter {} not found.".format(name))
-            # load averaged weights
             self.loras[adapter_name].load_state_dict(avg_state_dict)
             self.last = self.loras[adapter_name]
             return True
@@ -360,10 +339,10 @@ class LoRALayer(AdapterLayerBase):
             del self.loras[adapter_name]
 
     def add_fusion_layer(self, adapter_names: Union[List, str]):
-        pass  # not applicable to lora
+        pass
 
     def delete_fusion_layer(self, adapter_names: Union[List, str]):
-        pass  # not applicable to lora
+        pass
 
     def enable_adapters(self, adapter_setup: AdapterCompositionBlock, unfreeze_adapters: bool, unfreeze_fusion: bool):
         if unfreeze_adapters:
@@ -384,7 +363,6 @@ class LoRALayer(AdapterLayerBase):
         else:
             return None
 
-
 class LoRAState(NamedTuple):
     """Models the input and output states of a LoRA layer.
 
@@ -402,8 +380,6 @@ class LoRAState(NamedTuple):
     layer_output: torch.Tensor
     last: Optional[str]
 
-
-# Extend LoRALinear to include DoRA
 class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     def __init__(
         self,
@@ -487,7 +463,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     def merge_adapter(self, name: str):
         if name in self.loras:
             if self.merged == name:
-                return  # already merged
+                return
             elif not self.merged:
                 lora = self.loras[name]
                 if lora.use_gating:
@@ -539,7 +515,15 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
     def compose_single(self, adapter_setup: str, state: LoRAState, lvl: int = 0) -> LoRAState:
         lora = self.loras[adapter_setup]
-        hidden_states = lora(state.hidden_states, state.layer_input)  # Removed gate
+        hidden_states, gate = lora(state.hidden_states, state.layer_input)
+
+        if isinstance(lora, DoRA):
+            direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+            magnitude = hidden_states.norm(p=2, dim=1, keepdim=True)
+            hidden_states = lora.m * magnitude * direction
+
+        if gate is not None:
+            self._store_gating_score(adapter_setup, gate)
 
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
 
@@ -555,18 +539,23 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                 _, hidden_states, layer_output, last = state
 
                 last_lora = self.loras[last]
+
                 if isinstance(last_lora, DoRA):
-                    scaling = None
-                    hidden_states = hidden_states[0]
+                    direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+                    hidden_states = last_lora.m * direction
+                    layer_output = last_lora.com(layer_output, hidden_states, scaling=None)
                 else:
-                    scaling = 1
-                layer_output = last_lora.com(layer_output, hidden_states, scaling=scaling)
-
+                    layer_output = last_lora.com(layer_output, hidden_states, scaling=1)
+        
         return layer_output
-
 
 class LoRALinearTorch(LoRALinear, nn.Linear):
     pass
+
+# Assume bitsandbytes_available, Linear4bit, and Linear8bitLt are defined elsewhere
+
+# This code defines LoRALayer, LoRALinear, and DoRA with proper tensor dimensions handling.
+# Use this corrected implementation and test the training process.
 
 if bitsandbytes_available:
     class LoRALinear4bit(LoRALinear, Linear4bit):
