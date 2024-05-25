@@ -298,8 +298,6 @@ class DoRA(nn.Module):
         
         return output, gate
 
-
-
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
 
@@ -594,7 +592,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
                 else:  # LoRA
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
-        
+
         return layer_output
 
 
