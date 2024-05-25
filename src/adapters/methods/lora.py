@@ -174,6 +174,9 @@ class IA3(nn.Module):
         return hidden_states, gate
     
 
+import torch
+import torch.nn as nn
+import math
 
 class DoRA(nn.Module):
     def __init__(
@@ -204,7 +207,6 @@ class DoRA(nn.Module):
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape)).to(self.device)
         
         # Actual trainable parameter
-       
         self.scaling = self.lora_alpha / self.r
 
         # Initialize weights
@@ -228,23 +230,23 @@ class DoRA(nn.Module):
             nn.init.normal_(self.gate.weight, std=0.02)
         
         # Additional parameter for DoRA
-        self.m = nn.Parameter(torch.ones(1, self.out_dim)).to(self.device)  # Shape: (1, self.out_features)
+        self.m = nn.Parameter(torch.ones(1, self.out_dim)).to(self.device)  # Shape: (1, self.out_dim)
 
     @property
     def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A  # Shape: (self.out_features, self.in_features)
+        return self.lora_B @ self.lora_A  # Shape: (self.out_dim, self.in_dim)
 
     def lora(self, x):
-        return self.lora_alpha * (x @ self.lora_A @ self.lora_B)
+        return self.lora_alpha * (x @ self.lora_A.t() @ self.lora_B)
 
     def linear(self, x):
-        return nn.Linear(self.in_dim, self.out_dim)
+        return nn.Linear(self.in_dim, self.out_dim).to(self.device)(x)
 
     def G(self, h: torch.Tensor):
-        h = h.to(self.device)  # Shape: (batch_size, self.in_features)
+        h = h.to(self.device)  # Shape: (batch_size, self.in_dim)
         gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
         gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
-        return h * gate, gate if gate is not None else h
+        return h * gate if gate is not None else h
 
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
         if scaling is None:
@@ -262,6 +264,7 @@ class DoRA(nn.Module):
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         dora_modification = self.m * lora_output_norm
         return self.com(linear_output, dora_modification)
+
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
