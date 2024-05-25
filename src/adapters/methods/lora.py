@@ -155,6 +155,7 @@ class IA3(nn.Module):
 
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         scaling_vector = self.lora_B.view(1, 1, -1).repeat(layer_input.shape[0], 1, 1)
+        
         if hidden_states is None:
             hidden_states = scaling_vector
         else:
@@ -180,8 +181,8 @@ class DoRA(nn.Module):
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         self.config = config
         self.r = config.r
-        self.in_dim = lora_A_shape[1]
-        self.out_dim = lora_B_shape[0]
+        self.in_dim = lora_A_shape[0]
+        self.out_dim = lora_B_shape[1]
         self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
@@ -227,7 +228,7 @@ class DoRA(nn.Module):
         print(f"x shape: {x.shape}")
         print(f"lora_A shape: {self.lora_A.shape}")
         print(f"lora_B shape: {self.lora_B.shape}")
-        result = self.lora_alpha * (x @ self.lora_A @ self.lora_B.t())
+        result = self.lora_alpha * (self.lora_dropout(x) @ self.lora_A @ self.lora_B.t())
         print(f"lora result shape: {result.shape}")
         return result
 
@@ -244,15 +245,19 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input
-
+        hidden_states = self.lora_layer(hidden_states)
+        print("hidden_states", hidden_states.shape)
         direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-        
+        print("direction", direction.shape)
         hidden_states = self.m * direction
 
         if self.use_gating:
-            gate = torch.sigmoid(self.gate(hidden_states))
+            gate = self.gate(hidden_states)
+            print("gate", gate.shape)
+            gate = torch.sigmoid(gate)
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
             hidden_states = hidden_states * gate
+            print("hidden_states", hidden_states.shape)
         else:
             gate = None
 
