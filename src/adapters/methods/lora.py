@@ -192,7 +192,6 @@ class DoRA(nn.Module):
         self.attn_matrices = config.attn_matrices
         self.use_gating = config.use_gating
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.num_in = len(lora_A_shape[0]) 
         # Optional dropout
         if config.dropout > 0.0:
             self.lora_dropout = nn.Dropout(p=config.dropout)
