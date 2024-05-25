@@ -191,7 +191,7 @@ class DoRA(nn.Module):
         gating_heads: int = 1,
     ):
         super().__init__()
-        
+        print("Initializing DoRA...")
         self.config = config
         self.r = config.r
         self.out_dim = lora_B_shape[0]
@@ -308,6 +308,7 @@ class LoRALayer(AdapterLayerBase):
         self, location_key: str, model_config: PretrainedConfig, adapters_config: ModelAdaptersConfig, *args, **kwargs
     ):
         super().__init__(*args, **kwargs)
+        print("Initializing LoRALayer...")
         self.location_key = location_key + "_lora"
         self.model_config = model_config
         self.adapters_config = adapters_config
@@ -325,6 +326,7 @@ class LoRALayer(AdapterLayerBase):
         raise NotImplementedError()
 
     def add_adapter(self, adapter_name: str, layer_idx: int) -> bool:
+        print("adding adapter "+adapter_name)
         self.layer_idx = layer_idx
         lora_config = self.adapters_config.match(
             adapter_name,
@@ -437,7 +439,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         if no_init_bias and "bias" not in kwargs:
             kwargs["bias"] = False
         LoRALayer.__init__(self, location_key, model_config, adapters_config, in_features, out_features, **kwargs)
-
+        print("Initializing LoRALinear...")
         self.attn_key = attn_key
         self.fan_in_fan_out = fan_in_fan_out
         if fan_in_fan_out:
@@ -455,6 +457,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
         attn_key: str = None,
         **kwargs
     ):
+        print("WRAPPING!!!")
         if isinstance(module, Conv1D):
             new_module = LoRALinearTorch(
                 module.weight.shape[0],
