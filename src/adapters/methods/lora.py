@@ -263,7 +263,12 @@ class DoRA(nn.Module):
         h = h.to(self.device)  # Shape: (batch_size, self.in_dim)
         gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
         gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
-        return h * gate, gate if gate is not None else h, None
+        if gate is not None:
+            output = h * gate
+        else:
+            output = h
+        print(f"output dimensions: {output.shape}")
+        return output, gate
 
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
         if scaling is None:
