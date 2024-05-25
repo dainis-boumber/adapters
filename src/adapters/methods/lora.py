@@ -172,18 +172,6 @@ class IA3(nn.Module):
             gate = None
 
         return hidden_states, gate
-    
-class DoRALayer(nn.Module):
-    def __init__(self, in_dim, out_dim, rank, alpha):
-        super().__init__()
-        std_dev = 1 / torch.sqrt(torch.tensor(rank).float())
-        self.A = nn.Parameter(torch.randn(in_dim, rank) * std_dev)
-        self.B = nn.Parameter(torch.zeros(rank, out_dim))
-        self.alpha = alpha
-
-    def forward(self, x):
-        x = self.alpha * (x @ self.A @ self.B)
-        return x
 
 
 class DoRA(nn.Module):
@@ -290,7 +278,6 @@ class DoRA(nn.Module):
         output, gate = self.G(dora_modification)
         
         return output, gate
-
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
 
@@ -552,10 +539,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
     def compose_single(self, adapter_setup: str, state: LoRAState, lvl: int = 0) -> LoRAState:
         lora = self.loras[adapter_setup]
-        hidden_states, gate = lora(state.hidden_states, state.layer_input)
-            
-        if gate is not None:
-            self._store_gating_score(adapter_setup, gate)
+        hidden_states = lora(state.hidden_states, state.layer_input)  # Removed gate
 
         return state._replace(hidden_states=hidden_states, last=adapter_setup)
 
