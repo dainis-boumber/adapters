@@ -221,7 +221,7 @@ class DoRA(nn.Module):
 
     @property
     def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A.t()
+        return self.lora_B @ self.lora_A
 
     def lora_layer(self, x):
         print(f"x shape: {x.shape}")
@@ -231,34 +231,33 @@ class DoRA(nn.Module):
         print(f"lora result shape: {result.shape}")
         return result
 
-    def G(self, h: torch.Tensor):
-        h = h.to(self.device)
-        gate = torch.sigmoid(self.gate(h))
-        gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None
-        if gate is not None:
-            return h * gate, gate
-        else:
-            return h, None
-
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
+        """Performs the composition operation between existing and injected weights."""
         if scaling is None:
             scaling = self.scaling
         return weights + added * scaling
 
     def com_inv(self, weights: torch.Tensor, added: torch.Tensor) -> torch.Tensor:
+        """Inverts the composition operation between existing and injected weights."""
         return weights - added * self.scaling
 
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
-        hidden_states = layer_input.to(self.device) if hidden_states is None else hidden_states.to(self.device)
-        lora_output = self.lora_layer(hidden_states)
-        print(f"lora output shape {lora_output.shape}")
-        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-        print(f"lora output norm {lora_output_norm.shape}")
-        dora_modification = self.m * lora_output_norm
-        print(f"dora modification {dora_modification.shape}")
-        output, gate = self.G(dora_modification)
+        if hidden_states is None:
+            hidden_states = layer_input
+
+        direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
         
-        return output, gate
+        hidden_states = self.m * direction
+
+        if self.use_gating:
+            gate = torch.sigmoid(self.gate(hidden_states))
+            gate = torch.mean(gate, dim=1).unsqueeze(-1)
+            hidden_states = hidden_states * gate
+        else:
+            gate = None
+
+        return hidden_states, gate
+    
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
