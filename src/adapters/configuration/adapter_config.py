@@ -541,7 +541,7 @@ class DoRAConfig(LoRAConfig):
     output_lora: bool = False
     leave_out: List[int] = field(default_factory=list)
 
-    rank: int = 8
+    r: int = 8
     alpha: float = 8
     dropout: float = 0.0
     init_weights: str = "dora"

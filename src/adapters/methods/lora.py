@@ -193,7 +193,7 @@ class DoRA(nn.Module):
         super().__init__()
         
         self.config = config
-        self.rank = config.r
+        self.r = config.r
         self.out_dim = lora_B_shape[0]
         self.in_dim = lora_A_shape[1],
         self.alpha = config.alpha
@@ -215,7 +215,10 @@ class DoRA(nn.Module):
         self.scaling = int(self.lora_alpha)
 
         self.linear = nn.Linear(in_features=lora_A_shape[1], out_features=lora_B_shape[0])
-        self.lora = LoRALayer(self.linear.in_features, self.linear.out_features, self.rank, self.alpha)
+        self.lora = DoRALayer(in_dim=self.linear.in_features,
+                              out_dim=self.linear.out_features,
+                              rank=self.r, 
+                              alpha=self.alpha)
         self.m = nn.Parameter(torch.ones(1, self.linear.out_features))
         
 
