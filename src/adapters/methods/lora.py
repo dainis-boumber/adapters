@@ -181,8 +181,8 @@ class DoRA(nn.Module):
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         self.config = config
         self.r = config.r
-        self.in_dim = lora_A_shape[0]
-        self.out_dim = lora_B_shape[1]
+        self.out_dim = lora_B_shape[0]
+        self.in_dim = lora_A_shape[1],
         self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
