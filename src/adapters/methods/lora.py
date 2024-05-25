@@ -251,7 +251,7 @@ class DoRA(nn.Module):
         print("direction", lora_output_norm.shape)
         print(f"m {self.m.shape} lora_output_norm {lora_output_norm.shape}")
         dora_modification = self.m * lora_output_norm
-        print(f"dora_modification {dora_modification}")
+        print(f"dora_modification {dora_modification.shape}")
         if self.use_gating:
             gate = self.gate(dora_modification)
             print(f"gate {gate.shape}")
