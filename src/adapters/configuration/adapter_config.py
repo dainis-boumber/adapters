@@ -547,7 +547,7 @@ class DoRAConfig(LoRAConfig):
     init_weights: str = "dora"
     use_gating: bool = False
     composition_mode: str = "add"
-    attn_matrices: List[str] = field(default_factory=lambda: ["q", "v"])
+    attn_matrices: List[str] = field(default_factory=lambda: ["q", "v", "k"])
     normalization: bool = True
     modulation: bool = True
 
