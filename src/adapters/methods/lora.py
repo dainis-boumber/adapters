@@ -268,17 +268,31 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input
-        
+        print(f"hidden_states {hidden_states.shape}")
         linear_output = self.linear(hidden_states)
         lora_output = self.lora(hidden_states)
+        print(f"linear_output {linear_output.shape}")
+        print(f"lora_output {lora_output.shape}")
+
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        print(f"self.m {self.m.shape}")
+        print(f"lora_output_norm {lora_output_norm.shape}")
         dora_modification = self.m * lora_output_norm
+        
         hidden_states = linear_output + dora_modification
+        print(f"linear_output {linear_output.shape}")
+        print(f"dora_modification {dora_modification.shape}")
+        print(f"hidden_states {hidden_states.shape}")
         if self.use_gating:
+            print(f"self.gate in {self.gate.in_features} out {self.gate.out_features}")
             gate = self.gate(hidden_states)
+            print(f"gate {gate.shape}")
             gate = torch.sigmoid(gate)
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
+            print(f"gate {gate.shape}")
+            print(f"hidden_states {hidden_states.shape}")
             hidden_states = hidden_states * gate
+            print(f"hidden_states {hidden_states.shape}")
         else:
             gate = None
 
