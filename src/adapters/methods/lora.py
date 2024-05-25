@@ -281,20 +281,13 @@ class DoRA(nn.Module):
 
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         hidden_states = layer_input.to(self.device) if hidden_states is None else hidden_states.to(self.device)
-        
-        print(f"hidden states shape {hidden_states.shape}")
-        linear_output = self.linear(hidden_states)
-        print(f"linear output shape f{linear_output.shape}")
         lora_output = self.lora_layer(hidden_states)
         print(f"lora output shape {lora_output.shape}")
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
         print(f"lora output norm {lora_output_norm.shape}")
         dora_modification = self.m * lora_output_norm
         print(f"dora modification {dora_modification.shape}")
-        output = self.com(linear_output, dora_modification)
-        print(f"output dimensions: {output.shape}")
-        
-        output, gate = self.G(output)
+        output, gate = self.G(dora_modification)
         
         return output, gate
 
@@ -560,13 +553,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     def compose_single(self, adapter_setup: str, state: LoRAState, lvl: int = 0) -> LoRAState:
         lora = self.loras[adapter_setup]
         hidden_states, gate = lora(state.hidden_states, state.layer_input)
-
-        if isinstance(lora, DoRA):
-            # Decompose into magnitude and direction, then apply DoRA modifications
-            direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-            magnitude = hidden_states.norm(p=2, dim=1, keepdim=True)
-            hidden_states = lora.m * magnitude * direction
-
+            
         if gate is not None:
             self._store_gating_score(adapter_setup, gate)
 
@@ -584,14 +571,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                 _, hidden_states, layer_output, last = state
 
                 last_lora = self.loras[last]
-
-                if isinstance(last_lora, DoRA):
-                    # Decompose into magnitude and direction, then apply DoRA modifications
-                    direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-                    hidden_states = last_lora.m * direction
-                    layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
-                else:  # LoRA
-                    layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
+                layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
 
         return layer_output
 
