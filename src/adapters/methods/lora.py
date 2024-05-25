@@ -519,8 +519,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
         if isinstance(lora, DoRA):
             direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-            magnitude = hidden_states.norm(p=2, dim=1, keepdim=True)
-            hidden_states = lora.m * magnitude * direction
+            hidden_states = lora.m * direction
 
         if gate is not None:
             self._store_gating_score(adapter_setup, gate)
