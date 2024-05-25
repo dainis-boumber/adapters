@@ -173,7 +173,17 @@ class IA3(nn.Module):
 
         return hidden_states, gate
     
+class DoRALayer(nn.Module):
+    def __init__(self, in_dim, out_dim, rank, alpha):
+        super().__init__()
+        std_dev = 1 / torch.sqrt(torch.tensor(rank).float())
+        self.A = nn.Parameter(torch.randn(in_dim, rank) * std_dev)
+        self.B = nn.Parameter(torch.zeros(rank, out_dim))
+        self.alpha = alpha
 
+    def forward(self, x):
+        x = self.alpha * (x @ self.A @ self.B)
+        return x
 
 class DoRA(nn.Module):
     def __init__(
@@ -205,7 +215,7 @@ class DoRA(nn.Module):
         
         # Actual trainable parameter
         self.scaling = self.lora_alpha / self.r
-
+        self.linear_layer = nn.Linear(self.in_dim, self.out_dim).to(self.device)
         # Initialize weights
         if config.init_weights == "lora":
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
@@ -244,8 +254,8 @@ class DoRA(nn.Module):
 
     def linear(self, x):
         print(f"linear input shape: {x.shape}")
-        linear_layer = nn.Linear(self.in_dim, self.out_dim).to(self.device)
-        result = linear_layer(x)
+        
+        result = self.linear_layer(x)
         print(f"linear output shape: {result.shape}")
         return result
 
@@ -253,7 +263,7 @@ class DoRA(nn.Module):
         h = h.to(self.device)  # Shape: (batch_size, self.in_dim)
         gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
         gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
-        return h * gate if gate is not None else h
+        return h * gate, gate if gate is not None else h, None
 
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
         if scaling is None:
@@ -270,8 +280,8 @@ class DoRA(nn.Module):
         lora_output = self.lora(hidden_states)
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         dora_modification = self.m * lora_output_norm
-        return self.com(linear_output, dora_modification)
-
+        output, gate = self.G(self.com(linear_output, dora_modification))
+        return output, gate
 
 
 class LoRALayer(AdapterLayerBase):
