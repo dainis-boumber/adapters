@@ -174,18 +174,6 @@ class IA3(nn.Module):
         return hidden_states, gate
     
 
-import torch
-import torch.nn as nn
-import math
-
-import torch
-import torch.nn as nn
-import math
-
-import torch
-import torch.nn as nn
-import math
-
 class DoRA(nn.Module):
     def __init__(
         self,
@@ -198,8 +186,8 @@ class DoRA(nn.Module):
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         self.config = config
         self.r = config.r
-        self.in_dim = lora_A_shape[0]  # Corrected to match input dimensions
-        self.out_dim = lora_B_shape[1]  # Corrected to match output dimensions
+        self.in_dim = lora_A_shape[1]  # Assuming A has shape (in_dim, r)
+        self.out_dim = lora_B_shape[0]  # Assuming B has shape (out_dim, r)
         self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
@@ -234,7 +222,7 @@ class DoRA(nn.Module):
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_A_shape[1], gating_heads).to(self.device)
+            self.gate = nn.Linear(self.in_dim, gating_heads).to(self.device)
             nn.init.normal_(self.gate.weight, std=0.02)
         
         # Additional parameter for DoRA
@@ -242,14 +230,22 @@ class DoRA(nn.Module):
 
     @property
     def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A  # Shape: (self.out_dim, self.in_dim)
+        return self.lora_B @ self.lora_A.t()  # Shape: (self.out_dim, self.in_dim)
 
     def lora(self, x):
-        return self.lora_alpha * (x @ self.lora_A @ self.lora_B.t())
+        print(f"x shape: {x.shape}")
+        print(f"lora_A shape: {self.lora_A.shape}")
+        print(f"lora_B shape: {self.lora_B.shape}")
+        result = self.lora_alpha * (x @ self.lora_A @ self.lora_B.t())
+        print(f"lora result shape: {result.shape}")
+        return result
 
     def linear(self, x):
+        print(f"linear input shape: {x.shape}")
         linear_layer = nn.Linear(self.in_dim, self.out_dim).to(self.device)
-        return linear_layer(x)
+        result = linear_layer(x)
+        print(f"linear output shape: {result.shape}")
+        return result
 
     def G(self, h: torch.Tensor):
         h = h.to(self.device)  # Shape: (batch_size, self.in_dim)
@@ -267,7 +263,7 @@ class DoRA(nn.Module):
 
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         hidden_states = layer_input.to(self.device) if hidden_states is None else hidden_states.to(self.device)
-        
+        print(f"hidden states shape {hidden_states.shape}")
         linear_output = self.linear(hidden_states)
         lora_output = self.lora(hidden_states)
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
