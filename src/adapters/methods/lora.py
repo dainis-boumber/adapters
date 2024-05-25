@@ -49,7 +49,7 @@ class LoRA(nn.Module):
         # Actual trainable parameters
         self.lora_A = nn.Parameter(torch.zeros(lora_A_shape))
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape))
-        self.scaling = self.lora_alpha / self.r
+        self.scaling = int(self.lora_alpha / self.r)
 
         # For compatibility with (IA)^3, allow all init_weights types here.
         # Usually should be "lora".
@@ -124,7 +124,7 @@ class IA3(nn.Module):
 
         # Actual trainable parameters
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape))
-        self.scaling = self.lora_alpha
+        self.scaling = int(self.lora_alpha)
 
         # For compatibility with LoRA, allow all init_weights types here.
         # Usually should be "ia3".
@@ -205,7 +205,7 @@ class DoRA(nn.Module):
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape)).to(self.device)
         
         # Actual trainable parameter
-        self.scaling = self.lora_alpha / self.r
+        self.scaling = int(self.lora_alpha)
 
         # Initialize weights
         if config.init_weights == "lora":
@@ -868,8 +868,10 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
                         if isinstance(lora, DoRA):
                             delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
                             delta_w = lora.m * delta_w
-
-                        result = lora.com(result, self.pad(delta_w, lora), scaling=gate)
+                            scaling = None
+                        else:
+                            scaling = 1
+                        result = lora.com(result, self.pad(delta_w, lora), scaling=scaling)
                     return result
                 else:
                     raise ValueError(f"Invalid adapter setup. Cannot use {adapter_setup} with LoRA.")
