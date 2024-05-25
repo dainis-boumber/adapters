@@ -182,6 +182,10 @@ import torch
 import torch.nn as nn
 import math
 
+import torch
+import torch.nn as nn
+import math
+
 class DoRA(nn.Module):
     def __init__(
         self,
@@ -194,8 +198,8 @@ class DoRA(nn.Module):
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         self.config = config
         self.r = config.r
-        self.in_dim = lora_A_shape[0]  # A = in_dim x r
-        self.out_dim = lora_B_shape[1]  # B = r x out_dim
+        self.in_dim = lora_A_shape[0]  # Corrected to match input dimensions
+        self.out_dim = lora_B_shape[1]  # Corrected to match output dimensions
         self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
@@ -230,7 +234,7 @@ class DoRA(nn.Module):
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_A_shape[0], gating_heads).to(self.device)
+            self.gate = nn.Linear(lora_A_shape[1], gating_heads).to(self.device)
             nn.init.normal_(self.gate.weight, std=0.02)
         
         # Additional parameter for DoRA
@@ -238,7 +242,7 @@ class DoRA(nn.Module):
 
     @property
     def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A.t()  # Shape: (self.out_dim, self.in_dim)
+        return self.lora_B @ self.lora_A  # Shape: (self.out_dim, self.in_dim)
 
     def lora(self, x):
         return self.lora_alpha * (x @ self.lora_A @ self.lora_B.t())
