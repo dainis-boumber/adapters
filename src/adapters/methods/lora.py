@@ -214,12 +214,12 @@ class DoRA(nn.Module):
         self.lora_B = nn.Parameter(torch.zeros(lora_B_shape)).to(self.device)
         self.scaling = int(self.alpha)
 
-        self.linear = nn.Linear(in_features=lora_A_shape[1], out_features=lora_B_shape[0])
+        self.linear = nn.Linear(in_features=lora_A_shape[1], out_features=lora_B_shape[0], device="cuda")
         self.lora = DoRALayer(in_dim=self.linear.in_features,
                               out_dim=self.linear.out_features,
                               rank=self.r, 
-                              alpha=self.alpha)
-        self.m = nn.Parameter(torch.ones(1, self.linear.out_features))
+                              alpha=self.alpha).to(device="cuda")
+        self.m = nn.Parameter(torch.ones(1, self.linear.out_features, device="cuda"))
         
 
         if config.init_weights == "lora":
@@ -241,7 +241,6 @@ class DoRA(nn.Module):
             self.gate = nn.Linear(lora_A_shape[-1], gating_heads).to(self.device)
             nn.init.normal_(self.gate.weight, std=0.02)
         
-        self.m = nn.Parameter(torch.ones(1, self.out_dim)).to(self.device)
 
     
     @property
@@ -269,6 +268,7 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input
+        
         linear_output = self.linear(hidden_states)
         lora_output = self.lora(hidden_states)
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
