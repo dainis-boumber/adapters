@@ -228,7 +228,7 @@ class DoRA(nn.Module):
         print(f"x shape: {x.shape}")
         print(f"lora_A shape: {self.lora_A.shape}")
         print(f"lora_B shape: {self.lora_B.shape}")
-        result = self.lora_alpha * (self.lora_dropout(x) @ self.lora_A @ self.lora_B.t())
+        result = self.lora_alpha * (self.lora_dropout(x) @ self.lora_A @ self.lora_B)
         print(f"lora result shape: {result.shape}")
         return result
 
@@ -245,21 +245,23 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input
-        hidden_states = self.lora_layer(hidden_states)
-        print("hidden_states", hidden_states.shape)
-        direction = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-        print("direction", direction.shape)
-        hidden_states = self.m * direction
-
+        lora_output = self.lora_layer(hidden_states)
+        print("hidden_states", lora_output.shape)
+        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=-1, keepdim=True) + 1e-9)
+        print("direction", lora_output_norm.shape)
+        print(f"m {self.m.shape} lora_output_norm {lora_output_norm.shape}")
+        dora_modification = self.m * lora_output_norm
+        print(f"dora_modification {dora_modification}")
         if self.use_gating:
-            gate = self.gate(hidden_states)
-            print("gate", gate.shape)
+            gate = self.gate(dora_modification)
+            print(f"gate {gate.shape}")
             gate = torch.sigmoid(gate)
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
-            hidden_states = hidden_states * gate
+            dora_modification = dora_modification * gate
             print("hidden_states", hidden_states.shape)
         else:
             gate = None
+        
 
         return hidden_states, gate
     
@@ -278,7 +280,7 @@ class LoRALayer(AdapterLayerBase):
         self.last = None
         self.merged = False
 
-    def get_n_heads(self, lora: Union[LoRA, IA3, LoRAConfig]):
+    def get_n_heads(self, lora: Union[LoRA, IA3, DoRA, LoRAConfig]):
         return 1
     
     def _check_lora_location(self, config: LoRAConfig):
@@ -520,10 +522,6 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
     def compose_single(self, adapter_setup: str, state: LoRAState, lvl: int = 0) -> LoRAState:
         lora = self.loras[adapter_setup]
         hidden_states, gate = lora(state.hidden_states, state.layer_input)
-
-        if isinstance(lora, DoRA):
-            direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-            hidden_states = lora.m * direction
 
         if gate is not None:
             self._store_gating_score(adapter_setup, gate)
