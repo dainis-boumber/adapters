@@ -185,10 +185,6 @@ class DoRALayer(nn.Module):
         x = self.alpha * (x @ self.A @ self.B)
         return x
 
-import torch
-import torch.nn as nn
-import math
-from typing import Optional
 
 class DoRA(nn.Module):
     def __init__(
@@ -270,7 +266,10 @@ class DoRA(nn.Module):
         h = h.to(self.device)  # Shape: (batch_size, self.in_dim)
         gate = torch.sigmoid(self.gate(h))  # Shape: (batch_size, gating_heads)
         gate = torch.mean(gate, dim=1).unsqueeze(-1) if self.use_gating else None  # Shape: (batch_size, 1)
-        return h * gate if gate is not None else h
+        if gate is not None:
+            return h * gate, gate
+        else:
+            return h, None
 
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
         if scaling is None:
@@ -294,7 +293,10 @@ class DoRA(nn.Module):
         print(f"dora modification {dora_modification.shape}")
         output = self.com(linear_output, dora_modification)
         print(f"output dimensions: {output.shape}")
-        return output
+        
+        output, gate = self.G(output)
+        
+        return output, gate
 
 
 
@@ -588,12 +590,11 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                 if isinstance(last_lora, DoRA):
                     # Decompose into magnitude and direction, then apply DoRA modifications
                     direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-                    magnitude = hidden_states.norm(p=2, dim=1, keepdim=True)
-                    hidden_states = last_lora.m * magnitude * direction
+                    hidden_states = last_lora.m * direction
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
                 else:  # LoRA
                     layer_output = last_lora.com(layer_output, hidden_states, scaling=1.0)
-
+        
         return layer_output
 
 
