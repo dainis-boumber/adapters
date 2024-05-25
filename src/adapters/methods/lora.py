@@ -557,6 +557,7 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
                 last_lora = self.loras[last]
                 if isinstance(last_lora, DoRA):
                     scaling = None
+                    layer_output = layer_output[0]
                 else:
                     scaling = 1
                 layer_output = last_lora.com(layer_output, hidden_states, scaling=scaling)
