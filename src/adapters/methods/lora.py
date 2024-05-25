@@ -174,6 +174,7 @@ class IA3(nn.Module):
         return hidden_states, gate
     
 
+
 class DoRA(nn.Module):
     def __init__(
         self,
@@ -186,8 +187,8 @@ class DoRA(nn.Module):
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         self.config = config
         self.r = config.r
-        self.in_dim = lora_A_shape[1]  # Assuming A has shape (in_dim, r)
-        self.out_dim = lora_B_shape[0]  # Assuming B has shape (out_dim, r)
+        self.in_dim = lora_A_shape[1]  # Adjusted to match input dimensions
+        self.out_dim = lora_B_shape[0]  # Adjusted to match output dimensions
         self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
@@ -236,7 +237,8 @@ class DoRA(nn.Module):
         print(f"x shape: {x.shape}")
         print(f"lora_A shape: {self.lora_A.shape}")
         print(f"lora_B shape: {self.lora_B.shape}")
-        result = self.lora_alpha * (x @ self.lora_A @ self.lora_B.t())
+        # Corrected order and transposition
+        result = self.lora_alpha * (x @ self.lora_A.t() @ self.lora_B.t())
         print(f"lora result shape: {result.shape}")
         return result
 
@@ -263,12 +265,13 @@ class DoRA(nn.Module):
 
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         hidden_states = layer_input.to(self.device) if hidden_states is None else hidden_states.to(self.device)
-        print(f"hidden states shape {hidden_states.shape}")
+        
         linear_output = self.linear(hidden_states)
         lora_output = self.lora(hidden_states)
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         dora_modification = self.m * lora_output_norm
         return self.com(linear_output, dora_modification)
+
 
 
 class LoRALayer(AdapterLayerBase):
