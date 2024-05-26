@@ -316,8 +316,6 @@ class DoRA(nn.Module):
         print(f"linear_output {linear_output.shape}")
         lora_output = self.lora(hidden_states)
         print(f"lora_output {lora_output.shape}")
-        lora_output_2 = self.alpha * (self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B))
-        print(f"lora_output_2 {lora_output_2.shape}")
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         print(f"self.m {self.m.shape}")
         print(f"lora_output_norm {lora_output_norm.shape}")
