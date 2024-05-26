@@ -267,7 +267,6 @@ class DoRA(nn.Module):
                               rank=self.r, 
                               alpha=self.alpha).to(device="cuda")
         self.m = nn.Parameter(torch.ones(1, self.linear.out_features, device="cuda"))
-        self.gating_heads
         if config.init_weights == "lora":
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
