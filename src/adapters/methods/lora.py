@@ -199,8 +199,8 @@ class DoRALayer(nn.Module):
         else:
             self.dropout = lambda x: x
         std_dev = 1 / torch.sqrt(torch.tensor(rank).float())
-        self.A = nn.Parameter(torch.randn(in_dim, rank) * std_dev)
-        self.B = nn.Parameter(torch.zeros(rank, out_dim))
+        self.A = nn.Parameter(torch.randn((in_dim, rank)) * std_dev)
+        self.B = nn.Parameter(torch.zeros((rank, out_dim)))
         self.alpha = alpha
 
     def forward(self, x):
