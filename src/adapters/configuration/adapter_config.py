@@ -552,7 +552,6 @@ class ConfigUnion(AdapterConfig):
     configs: List[AdapterConfig]
 
     def __init__(self, *configs: List[AdapterConfig]):
-        super().__init__()
         self.validate(configs)
         self.configs = configs
 
