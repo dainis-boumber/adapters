@@ -319,7 +319,7 @@ class DoRA(nn.Module):
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         print(f"self.m {self.m.shape}")
         print(f"lora_output_norm {lora_output_norm.shape}")
-        dora_modification = self.m * lora_output_norm
+        dora_modification = lora_output_norm * self.m
         
         print(f"dora_modification {dora_modification.shape}")
         
