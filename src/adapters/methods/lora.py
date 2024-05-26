@@ -297,8 +297,8 @@ class DoRA(nn.Module):
         # Shape of lora_B: (r, lora_B_shape[1])
         # Output shape: (batch_size, sequence_length, lora_B_shape[1])
         if hidden_states is None:
-            hidden_states = layer_input
-        im
+            idden_states = layer_input
+        
         # Perform dropout and matrix multiplication with proper dimensions
         hidden_states = self.lora_dropout(hidden_states)
         hidden_states = hidden_states @ self.lora_A  # (batch_size, sequence_length, r)
