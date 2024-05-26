@@ -221,10 +221,6 @@ import torch
 import torch.nn as nn
 import math
 from typing import Optional
-import torch
-import torch.nn as nn
-import math
-from typing import Optional
 
 class DoRA(nn.Module):
     def __init__(
@@ -273,7 +269,7 @@ class DoRA(nn.Module):
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_B_shape[0], gating_heads)  # Ensure the correct dimensions
+            self.gate = nn.Linear(lora_B_shape[-1], gating_heads)  # Ensure the correct dimensions
             nn.init.normal_(self.gate.weight, std=0.02)
 
         self.m = nn.Parameter(torch.ones(1, lora_B_shape[0]))
@@ -297,12 +293,18 @@ class DoRA(nn.Module):
             hidden_states = layer_input
 
         # Shape of hidden_states: (batch_size, sequence_length, lora_A_shape[0])
-        # Shape of lora_A: (lora_A_shape[1], r)
-        # Shape of lora_B: (r, lora_B_shape[0])
-        # Output shape: (batch_size, sequence_length, lora_B_shape[0])
+        # Shape of lora_A: (lora_A_shape[0], r)
+        # Shape of lora_B: (r, lora_B_shape[1])
+        # Output shape: (batch_size, sequence_length, lora_B_shape[1])
+        if hidden_states is None:
+            hidden_states = layer_input
+        im
+        # Perform dropout and matrix multiplication with proper dimensions
+        hidden_states = self.lora_dropout(hidden_states)
+        hidden_states = hidden_states @ self.lora_A  # (batch_size, sequence_length, r)
+        hidden_states = hidden_states @ self.lora_B.T  # (batch_size, sequence_length, lora_B_shape[1])
+        hidden_states = hidden_states * self.scaling
 
-        hidden_states = self.scaling * (self.lora_dropout(hidden_states) @ self.lora_A @ self.lora_B)
-        
         if self.use_gating:
             gate = torch.sigmoid(self.gate(hidden_states))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
