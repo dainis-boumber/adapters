@@ -5,16 +5,6 @@ from typing import List, Optional, Union
 
 from ..utils import resolve_adapter_config
 
-
-logger = logging.getLogger(__name__)
-
-import logging
-from collections.abc import Mapping
-from dataclasses import FrozenInstanceError, asdict, dataclass, field, replace
-from typing import List, Optional, Union
-
-from ..utils import resolve_adapter_config
-
 logger = logging.getLogger(__name__)
 
 class AdapterConfig(Mapping):
