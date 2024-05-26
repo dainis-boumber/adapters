@@ -217,58 +217,43 @@ class DoRALayer(nn.Module):
         x = self.alpha * (self.dropout(x) @ self.A @ self.B)
         return x
     
+import torch
+import torch.nn as nn
+import math
+from typing import Optional
+
 class DoRA(nn.Module):
     def __init__(
         self,
         lora_A_shape,
         lora_B_shape,
-        config: LoRAConfig,
+        config,
         gating_heads: int = 1,
     ):
-        """
-        Initialize the DoRA (Dense Overlapping Representation Adaptation) module.
-
-        Args:
-            lora_A_shape (tuple): The shape of the input tensor for the lora_A parameter.
-            lora_B_shape (tuple): The shape of the input tensor for the lora_B parameter.
-            config (LoRAConfig): The configuration object for the DoRA module.
-            gating_heads (int, optional): The number of gating heads. Defaults to 1.
-        """
         super().__init__()
         print(f"lora_A_shape {lora_A_shape} lora_B_shape {lora_B_shape} config {config} gating_heads {gating_heads}")
         print("Initializing DoRA...")
-        self.config = config
         self.r = config.r
-        self.out_dim = lora_B_shape[0]
-        self.in_dim = lora_A_shape[1],
-        self.alpha = config.alpha
+        self.lora_alpha = config.alpha
         self.composition_mode = config.composition_mode
         self.attn_matrices = config.attn_matrices
         self.use_gating = config.use_gating
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+
+        # Optional dropout
         if config.dropout > 0.0:
             self.lora_dropout = nn.Dropout(p=config.dropout)
         else:
             self.lora_dropout = lambda x: x
-         
-        assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
-        std_dev = 1 / torch.sqrt(torch.tensor(self.r).float())
-        print(lora_A_shape, lora_B_shape)
-        print(self.in_dim, self.out_dim, self.r)
-        self.in_dim = self.in_dim[0]
-        print(self.in_dim)
-        self.lora_A = nn.Parameter(torch.randn((self.in_dim, self.r)) * std_dev)
-        self.lora_B = nn.Parameter(torch.zeros((self.r, self.out_dim)))
-        self.scaling = int(self.alpha)
 
-        self.linear = nn.Linear(in_features=self.in_dim, out_features=self.out_dim)
-        self.lora = DoRALayer(in_dim=self.in_dim,
-                              out_dim=self.out_dim,
-                              rank=self.r, 
-                              alpha=self.alpha)
-        self.m = nn.Parameter(torch.ones(1, self.out_dim))
+        # Actual trainable parameters
+        self.lora_A = nn.Parameter(torch.zeros(lora_A_shape))
+        self.lora_B = nn.Parameter(torch.zeros(lora_B_shape))
+        self.scaling = int(self.lora_alpha / self.r)
+
+        # For compatibility with (IA)^3, allow all init_weights types here.
+        # Usually should be "lora".
         if config.init_weights == "lora":
+            # initialize A the same way as the default for nn.Linear and B to zero
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
         elif config.init_weights == "bert":
@@ -281,23 +266,17 @@ class DoRA(nn.Module):
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
         else:
-            raise ValueError(f"Unknown init_weights type: {config.init_weights}")
+            raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
         if self.use_gating:
-            self.gate = nn.Linear(self.in_dim, gating_heads)
+            self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
-        
 
-    
+        self.m = nn.Parameter(torch.ones(1, lora_B_shape[0]))
+
     @property
     def delta_w(self) -> torch.Tensor:
-        return torch.t(self.lora_B) @ torch.t(self.lora_A)
-    '''
-
-    def lora_layer(self, x):
-        result = self.alpha * (self.lora_dropout(x) @ torch.t(self.lora_A) @ torch.t(self.lora_B))
-        return result
-    '''
+        return self.lora_B @ self.lora_A
 
     def com(self, weights: torch.Tensor, added: torch.Tensor, scaling=None) -> torch.Tensor:
         """Performs the composition operation between existing and injected weights."""
@@ -312,33 +291,24 @@ class DoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input
-        print(f"hidden_states {hidden_states.shape}")
-        lora_output = self.lora(hidden_states)
-        print(f"lora_output {lora_output.shape}")
+
+        # Shape of hidden_states: (batch_size, sequence_length, lora_A_shape[0])
+        # Shape of lora_A: (lora_A_shape[1], r)
+        # Shape of lora_B: (r, lora_B_shape[0])
+        # Output shape: (batch_size, sequence_length, lora_B_shape[0])
+
+        hidden_states = self.lora_dropout(hidden_states) @ self.lora_A @ self.lora_B
         if self.use_gating:
-            print(f"self.gate in {self.gate.in_features} out {self.gate.out_features}")
-            gate = self.gate(lora_output)
-            print(f"gate {gate.shape}")
-            gate = torch.sigmoid(gate)
+            gate = torch.sigmoid(self.gate(hidden_states))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
-            print(f"hidden_states {lora_output} gate {gate.shape}")
-            
-            lora_output = lora_output * gate
-            print(f"outputs {lora_output.shape}")
+            hidden_states = hidden_states * gate
         else:
             gate = None
-        
-        
-        lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
-        print(f"self.m {self.m.shape}")
-        print(f"lora_output_norm {lora_output_norm.shape}")
-        dora_modification = lora_output_norm * self.m
-        
-        print(f"dora_modification {dora_modification.shape}")
-        
-        
 
-        return dora_modification, gate
+        hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        hidden_states = hidden_states * self.m
+
+        return hidden_states, gate
 
 
 class LoRALayer(AdapterLayerBase):
