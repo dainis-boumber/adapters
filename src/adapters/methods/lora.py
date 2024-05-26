@@ -296,8 +296,9 @@ class DoRA(nn.Module):
         # Shape of lora_A: (lora_A_shape[1], r)
         # Shape of lora_B: (r, lora_B_shape[0])
         # Output shape: (batch_size, sequence_length, lora_B_shape[0])
-
-        hidden_states = self.lora_dropout(hidden_states) @ self.lora_A @ self.lora_B
+        if hidden_states is None:
+            hidden_states = layer_input
+        hidden_states = self.alpha * (self.lora_dropout(hidden_states) @ (self.lora_A @ self.lora_B))
         if self.use_gating:
             gate = torch.sigmoid(self.gate(hidden_states))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
