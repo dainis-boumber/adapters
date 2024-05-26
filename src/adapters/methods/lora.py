@@ -255,6 +255,8 @@ class DoRA(nn.Module):
         std_dev = 1 / torch.sqrt(torch.tensor(self.r).float())
         print(lora_A_shape, lora_B_shape)
         print(self.in_dim, self.out_dim, self.r)
+        self.in_dim = self.in_dim[0]
+        print(self.in_dim)
         self.lora_A = nn.Parameter(torch.randn((self.in_dim, self.r)) * std_dev).to(self.device)
         self.lora_B = nn.Parameter(torch.zeros((self.r, self.out_dim))).to(self.device)
         self.scaling = int(self.alpha)
