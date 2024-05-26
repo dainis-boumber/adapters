@@ -235,6 +235,7 @@ class DoRA(nn.Module):
             gating_heads (int, optional): The number of gating heads. Defaults to 1.
         """
         super().__init__()
+        print(f"lora_A_shape {lora_A_shape} lora_B_shape {lora_B_shape} config {config} gating_heads {gating_heads}")
         print("Initializing DoRA...")
         self.config = config
         self.r = config.r
@@ -257,16 +258,16 @@ class DoRA(nn.Module):
         print(self.in_dim, self.out_dim, self.r)
         self.in_dim = self.in_dim[0]
         print(self.in_dim)
-        self.lora_A = nn.Parameter(torch.randn((self.in_dim, self.r)) * std_dev).to(self.device)
-        self.lora_B = nn.Parameter(torch.zeros((self.r, self.out_dim))).to(self.device)
+        self.lora_A = nn.Parameter(torch.randn((self.in_dim, self.r)) * std_dev)
+        self.lora_B = nn.Parameter(torch.zeros((self.r, self.out_dim)))
         self.scaling = int(self.alpha)
 
-        self.linear = nn.Linear(in_features=self.in_dim, out_features=self.out_dim, device="cuda")
+        self.linear = nn.Linear(in_features=self.in_dim, out_features=self.out_dim)
         self.lora = DoRALayer(in_dim=self.linear.in_features,
                               out_dim=self.linear.out_features,
                               rank=self.r, 
-                              alpha=self.alpha).to(device="cuda")
-        self.m = nn.Parameter(torch.ones(1, self.linear.out_features, device="cuda"))
+                              alpha=self.alpha)
+        self.m = nn.Parameter(torch.ones(1, self.linear.out_features))
         if config.init_weights == "lora":
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
@@ -283,7 +284,7 @@ class DoRA(nn.Module):
             raise ValueError(f"Unknown init_weights type: {config.init_weights}")
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_A_shape[-1], gating_heads).to(self.device)
+            self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
         
 
