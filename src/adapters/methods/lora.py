@@ -269,7 +269,7 @@ class DoRA(nn.Module):
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_B_shape[-1], gating_heads)  # Ensure the correct dimensions
+            self.gate = nn.Linear(lora_B_shape[0], gating_heads)  # Ensure the correct dimensions
             nn.init.normal_(self.gate.weight, std=0.02)
 
         self.m = nn.Parameter(torch.ones(1, lora_B_shape[0]))
