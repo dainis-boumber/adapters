@@ -253,6 +253,7 @@ class DoRA(nn.Module):
         
         assert config.composition_mode == "add", "DoRA module only supports composition_mode='add'."
         std_dev = 1 / torch.sqrt(torch.tensor(self.r).float())
+        print(self.in_dim, self.out_dim, self.r)
         self.lora_A = nn.Parameter(torch.randn((self.in_dim, self.r)) * std_dev).to(self.device)
         self.lora_B = nn.Parameter(torch.zeros((self.r, self.out_dim))).to(self.device)
         self.scaling = int(self.alpha)
