@@ -284,7 +284,7 @@ class DoRA(nn.Module):
             raise ValueError(f"Unknown init_weights type: {config.init_weights}")
 
         if self.use_gating:
-            self.gate = nn.Linear(self.in_dim, gating_heads)
+            self.gate = nn.Linear(max(self.in_dim, self.out_dim), gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
         
 
