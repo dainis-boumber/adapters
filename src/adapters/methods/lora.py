@@ -284,7 +284,7 @@ class DoRA(nn.Module):
             raise ValueError(f"Unknown init_weights type: {config.init_weights}")
 
         if self.use_gating:
-            self.gate = nn.Linear(self.in_dim, self.out_dim, gating_heads)
+            self.gate = nn.Linear(self.in_dim, gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
         
 
@@ -313,21 +313,22 @@ class DoRA(nn.Module):
         if hidden_states is None:
             hidden_states = layer_input
         print(f"hidden_states {hidden_states.shape}")
+        lora_output = self.lora(hidden_states)
+        print(f"lora_output {lora_output.shape}")
         if self.use_gating:
             print(f"self.gate in {self.gate.in_features} out {self.gate.out_features}")
-            gate = self.gate(hidden_states)
+            gate = self.gate(lora_output)
             print(f"gate {gate.shape}")
             gate = torch.sigmoid(gate)
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
-            print(f"hidden_states {hidden_states} gate {gate.shape}")
+            print(f"hidden_states {lora_output} gate {gate.shape}")
             
-            hidden_states = hidden_states * gate
-            print(f"outputs {hidden_states.shape}")
+            lora_output = lora_output * gate
+            print(f"outputs {lora_output.shape}")
         else:
             gate = None
-        print(f"hidden_states {hidden_states.shape}")
-        lora_output = self.lora(hidden_states)
-        print(f"lora_output {lora_output.shape}")
+        
+        
         lora_output_norm = lora_output / (lora_output.norm(p=2, dim=1, keepdim=True) + 1e-9)
         print(f"self.m {self.m.shape}")
         print(f"lora_output_norm {lora_output_norm.shape}")
