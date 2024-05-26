@@ -221,6 +221,10 @@ import torch
 import torch.nn as nn
 import math
 from typing import Optional
+import torch
+import torch.nn as nn
+import math
+from typing import Optional
 
 class DoRA(nn.Module):
     def __init__(
@@ -269,7 +273,7 @@ class DoRA(nn.Module):
             raise ValueError("Unknown init_weights type: {}".format(config.init_weights))
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
+            self.gate = nn.Linear(lora_B_shape[0], gating_heads)  # Ensure the correct dimensions
             nn.init.normal_(self.gate.weight, std=0.02)
 
         self.m = nn.Parameter(torch.ones(1, lora_B_shape[0]))
@@ -296,9 +300,9 @@ class DoRA(nn.Module):
         # Shape of lora_A: (lora_A_shape[1], r)
         # Shape of lora_B: (r, lora_B_shape[0])
         # Output shape: (batch_size, sequence_length, lora_B_shape[0])
-        if hidden_states is None:
-            hidden_states = layer_input
-        hidden_states = self.lora_alpha * (self.lora_dropout(hidden_states) @ (torch.t(self.lora_A) @ torch.t(self.lora_B)))
+
+        hidden_states = self.scaling * (self.lora_dropout(hidden_states) @ self.lora_A @ self.lora_B)
+        
         if self.use_gating:
             gate = torch.sigmoid(self.gate(hidden_states))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
@@ -306,11 +310,10 @@ class DoRA(nn.Module):
         else:
             gate = None
 
-        hidden_states = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
+        hidden_states = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
         hidden_states = hidden_states * self.m
 
         return hidden_states, gate
-
 
 class LoRALayer(AdapterLayerBase):
     adapter_modules_name = "loras"
