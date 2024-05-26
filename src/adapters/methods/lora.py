@@ -337,7 +337,7 @@ class DoRA(nn.Module):
         
         
 
-        return outputs, gate
+        return dora_modification, gate
 
 
 class LoRALayer(AdapterLayerBase):
