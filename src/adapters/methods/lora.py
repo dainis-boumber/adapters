@@ -263,11 +263,11 @@ class DoRA(nn.Module):
         self.scaling = int(self.alpha)
 
         self.linear = nn.Linear(in_features=self.in_dim, out_features=self.out_dim)
-        self.lora = DoRALayer(in_dim=self.linear.in_features,
-                              out_dim=self.linear.out_features,
+        self.lora = DoRALayer(in_dim=self.in_dim,
+                              out_dim=self.out_dim,
                               rank=self.r, 
                               alpha=self.alpha)
-        self.m = nn.Parameter(torch.ones(1, self.linear.out_features))
+        self.m = nn.Parameter(torch.ones(1, self.out_dim))
         if config.init_weights == "lora":
             nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
             nn.init.zeros_(self.lora_B)
@@ -284,14 +284,14 @@ class DoRA(nn.Module):
             raise ValueError(f"Unknown init_weights type: {config.init_weights}")
 
         if self.use_gating:
-            self.gate = nn.Linear(lora_A_shape[-1], gating_heads)
+            self.gate = nn.Linear(self.in_dim, gating_heads)
             nn.init.normal_(self.gate.weight, std=0.02)
         
 
     
     @property
     def delta_w(self) -> torch.Tensor:
-        return self.lora_B @ self.lora_A
+        return torch.t(self.lora_B) @ torch.t(self.lora_A)
     '''
 
     def lora_layer(self, x):
