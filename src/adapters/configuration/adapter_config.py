@@ -538,8 +538,6 @@ class DoRAConfig(LoRAConfig):
     use_gating: bool = False
     composition_mode: str = "add"
     attn_matrices: List[str] = field(default_factory=lambda: ["q", "v", "k"])
-    normalization: bool = True
-    modulation: bool = True
 
 class ConfigUnion(AdapterConfig):
     """

@@ -86,7 +86,15 @@ class LoRA(nn.Module):
     def forward(self, hidden_states: Optional[torch.Tensor], layer_input: torch.Tensor):
         if hidden_states is None:
             hidden_states = layer_input
-        hidden_states = self.lora_dropout(hidden_states) @ torch.t(self.lora_A) @ torch.t(self.lora_B)
+        if hidden_states is None:
+            hidden_states = layer_input
+        
+        # Perform dropout and matrix multiplication with proper dimensions
+        hidden_states = self.lora_dropout(hidden_states)
+        hidden_states = hidden_states @ self.lora_A.T  # (batch_size, sequence_length, r)
+        hidden_states = hidden_states @ self.lora_B.T  # (batch_size, sequence_length, lora_B_shape[1])
+        hidden_states = hidden_states * self.scaling
+
         if self.use_gating:
             gate = torch.sigmoid(self.gate(hidden_states))
             gate = torch.mean(gate, dim=1).unsqueeze(-1)
@@ -94,6 +102,9 @@ class LoRA(nn.Module):
         else:
             gate = None
 
+        hidden_states = hidden_states / (hidden_states.norm(p=2, dim=-1, keepdim=True) + 1e-9)
+        hidden_states = hidden_states * self.m
+        
         return hidden_states, gate
 
 class IA3(nn.Module):
