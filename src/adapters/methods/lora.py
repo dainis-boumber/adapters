@@ -216,11 +216,7 @@ class DoRALayer(nn.Module):
         """
         x = self.alpha * (self.dropout(x) @ self.A @ self.B)
         return x
-    
-import torch
-import torch.nn as nn
-import math
-from typing import Optional
+
 
 class DoRA(nn.Module):
     def __init__(
@@ -595,12 +591,8 @@ class LoRALinear(LoRALayer, ComposableAdapterLayerBase):
 
                 last_lora = self.loras[last]
 
-                if isinstance(last_lora, DoRA):
-                    direction = hidden_states / (hidden_states.norm(p=2, dim=1, keepdim=True) + 1e-9)
-                    hidden_states = last_lora.m * direction
-                    layer_output = last_lora.com(layer_output, hidden_states, scaling=None)
-                else:
-                    layer_output = last_lora.com(layer_output, hidden_states, scaling=1)
+                layer_output = last_lora.com(layer_output, hidden_states, scaling=last_lora.scaling)
+                
         
         return layer_output
 
@@ -635,10 +627,6 @@ if bitsandbytes_available:
                     layer_weight = dequantize_bnb_weight(self.weight, state=self.quant_state)
                     kwargs = self.weight.__dict__
 
-                    # Apply normalization and scaling for DoRA
-                    if isinstance(lora, DoRA):
-                        delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-                        delta_w = lora.m * delta_w
 
                     merged_weight = lora.com(layer_weight, delta_w)
                     self.weight = Params4bit(merged_weight.to("gpu"), requires_grad=False, **kwargs).to(
@@ -655,10 +643,6 @@ if bitsandbytes_available:
                 merged_weight = dequantize_bnb_weight(self.weight, state=self.quant_state)
                 kwargs = self.weight.__dict__
 
-                # Apply inverse normalization and scaling for DoRA
-                if isinstance(lora, DoRA):
-                    delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-                    delta_w = lora.m * delta_w
 
                 layer_weight = lora.com_inv(merged_weight, delta_w)
                 self.weight = Params4bit(layer_weight.to("gpu"), requires_grad=False, **kwargs).to(self.weight.device)
@@ -683,11 +667,6 @@ if bitsandbytes_available:
                     delta_w = self.maybe_t(lora.delta_w)
                     layer_weight = dequantize_bnb_weight(self.weight, state=self.state)
 
-                    # Apply normalization and scaling for DoRA
-                    if isinstance(lora, DoRA):
-                        delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-                        delta_w = lora.m * delta_w
-
                     merged_weight = lora.com(layer_weight, delta_w)
                     self.weight = Int8Params(
                         merged_weight.to("cpu"), requires_grad=False, has_fp16_weights=self.weight.has_fp16_weights
@@ -703,10 +682,6 @@ if bitsandbytes_available:
                 delta_w = self.maybe_t(lora.delta_w)
                 merged_weight = dequantize_bnb_weight(self.weight, state=self.state)
 
-                # Apply inverse normalization and scaling for DoRA
-                if isinstance(lora, DoRA):
-                    delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-                    delta_w = lora.m * delta_w
 
                 layer_weight = lora.com_inv(merged_weight, delta_w)
                 self.weight = Int8Params(
@@ -911,8 +886,6 @@ class LoRAMergedLinear(LoRALayer, nn.Linear):
 
                         # Apply normalization and scaling for DoRA
                         if isinstance(lora, DoRA):
-                            delta_w = delta_w / (delta_w.norm(p=2, dim=-1, keepdim=True) + 1e-9)
-                            delta_w = lora.m * delta_w
                             scaling = None
                         else:
                             scaling = 1
